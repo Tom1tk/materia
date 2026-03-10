@@ -26,6 +26,31 @@ dp = Dispatcher()
 scheduler = AsyncIOScheduler(timezone=config.TIMEZONE)
 
 
+async def refresh_commands():
+    """Rebuild the Telegram command menu from manifest.json."""
+    # Fixed meta-commands always at the top
+    commands = [
+        BotCommand(command="help",    description="Show commands and available tools"),
+        BotCommand(command="context", description="Show token usage breakdown"),
+        BotCommand(command="compact", description="Force context compaction"),
+        BotCommand(command="tools",   description="List all available tools"),
+        BotCommand(command="scripts", description="List scripts and schedules"),
+    ]
+    try:
+        with open("/opt/tgbot/manifest.json") as f:
+            data = json.load(f)
+        for tool in data["tools"]:
+            name = tool["name"]
+            desc = tool["description"]
+            # Telegram: command 1–32 chars (a-z, 0-9, _), description 3–256 chars
+            if len(name) <= 32 and len(desc) >= 3:
+                commands.append(BotCommand(command=name, description=desc[:256]))
+    except Exception as e:
+        logger.warning(f"Could not load manifest for command menu: {e}")
+    await bot.set_my_commands(commands)
+    logger.info(f"[Materia] Command menu updated — {len(commands)} entries.")
+
+
 def truncate(text: str, limit: int = 4096) -> str:
     if len(text) <= limit:
         return text
@@ -161,6 +186,9 @@ async def handle_message(message: Message):
         # Tool actions are deterministic — no streaming needed
         result = await route(intent, user_text)
         await message.answer(truncate(result))
+        # If a new tool was just created, refresh the command menu immediately
+        if action == "create_tool":
+            await refresh_commands()
 
     await mem.conversation_add("assistant", result)
 
@@ -172,14 +200,7 @@ async def main():
     Path("/opt/tgbot/scripts").mkdir(exist_ok=True)
     Path("/opt/tgbot/data").mkdir(exist_ok=True)
 
-    # Register command menu so "/" autocomplete works in Telegram
-    await bot.set_my_commands([
-        BotCommand(command="help",    description="Show commands and available tools"),
-        BotCommand(command="context", description="Show token usage breakdown"),
-        BotCommand(command="compact", description="Force context compaction"),
-        BotCommand(command="tools",   description="List all available tools"),
-        BotCommand(command="scripts", description="List user scripts and schedules"),
-    ])
+    await refresh_commands()
     logger.info("[Materia] Bot commands registered.")
 
     scheduler.start()
