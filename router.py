@@ -32,12 +32,11 @@ async def route(intent: dict, user_message: str) -> str:
 
     handler = TOOL_MAP.get(action)
     if handler is None:
-        # Check user_tools
-        try:
-            import tools.user_tools as user_tools_module
+        # Check user_tools via sys.modules so hot-reloaded version is used
+        import sys
+        user_tools_module = sys.modules.get("tools.user_tools")
+        if user_tools_module:
             handler = getattr(user_tools_module, action, None)
-        except Exception:
-            pass
 
     if handler is None:
         logger.warning(f"No handler for action: {action}, falling back to chat")

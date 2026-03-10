@@ -105,7 +105,7 @@ async def web_search(params: dict) -> str:
 async def hn_briefing(params: dict) -> str:
     length = params.get("length", "medium")
     topic = params.get("topic", "")
-    n = {"short": 5, "medium": 10, "long": 20}.get(length, 10)
+    n = 5
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -113,22 +113,23 @@ async def hn_briefing(params: dict) -> str:
                 "https://hacker-news.firebaseio.com/v0/topstories.json",
                 timeout=aiohttp.ClientTimeout(total=10)
             ) as resp:
-                top_ids = (await resp.json())[:30]
+                top_ids = (await resp.json())[:n * 2]
 
-            stories = []
-            for story_id in top_ids[:n*2]:  # fetch more to filter by topic
-                try:
-                    async with session.get(
-                        f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json",
-                        timeout=aiohttp.ClientTimeout(total=5)
-                    ) as resp:
-                        item = await resp.json()
-                        if item and item.get("title"):
-                            stories.append(item)
-                            if len(stories) >= n:
-                                break
-                except Exception:
-                    continue
+            sem = asyncio.Semaphore(5)
+
+            async def fetch_item(story_id):
+                async with sem:
+                    try:
+                        async with session.get(
+                            f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json",
+                            timeout=aiohttp.ClientTimeout(total=5)
+                        ) as resp:
+                            return await resp.json()
+                    except Exception:
+                        return None
+
+            results = await asyncio.gather(*[fetch_item(sid) for sid in top_ids])
+            stories = [r for r in results if r and r.get("title")]
     except Exception as e:
         return f"Failed to fetch HN stories: {e}"
 
@@ -257,6 +258,38 @@ def _add_cron_entry(filename: str, schedule: str) -> str:
 
 # ─── 5. LIST SCRIPTS ────────────────────────────────────────────────────────
 
+def _cron_to_human(expr: str) -> str:
+    """Convert a 5-field cron expression to a human-readable string."""
+    DAY_NAMES = {
+        "0": "Sun", "1": "Mon", "2": "Tue", "3": "Wed",
+        "4": "Thu", "5": "Fri", "6": "Sat",
+    }
+    parts = expr.split()
+    if len(parts) != 5:
+        return expr
+    minute, hour, dom, month, dow = parts
+
+    try:
+        time_str = f"{int(hour):02d}:{int(minute):02d}"
+    except ValueError:
+        time_str = f"{hour}:{minute}"
+
+    if dow == "*":
+        day_str = "daily"
+    elif "," in dow:
+        days = [DAY_NAMES.get(d, d) for d in dow.split(",")]
+        day_str = "–".join(days)
+    elif "-" in dow:
+        start, end = dow.split("-", 1)
+        day_str = f"{DAY_NAMES.get(start, start)}–{DAY_NAMES.get(end, end)}"
+    else:
+        day_str = DAY_NAMES.get(dow, dow)
+
+    if day_str == "daily":
+        return f"daily at {time_str}"
+    return f"{day_str} at {time_str}"
+
+
 async def list_scripts(params: dict) -> str:
     SCRIPTS_DIR.mkdir(exist_ok=True)
     scripts = list(SCRIPTS_DIR.glob("*.py"))
@@ -273,13 +306,14 @@ async def list_scripts(params: dict) -> str:
     lines = []
     for script in sorted(scripts):
         name = script.name
-        schedule = ""
+        schedules = []
         for line in crontab_text.splitlines():
             if name in line and not line.startswith("#"):
                 parts = line.split()
                 if len(parts) >= 5:
-                    schedule = " ".join(parts[:5])
-        lines.append(f"• {name}" + (f" — {schedule}" if schedule else " — (no schedule)"))
+                    schedules.append(_cron_to_human(" ".join(parts[:5])))
+        schedule_str = ", ".join(schedules) if schedules else "no schedule"
+        lines.append(f"• {name} — {schedule_str}")
 
     return "Scripts:\n" + "\n".join(lines)
 
