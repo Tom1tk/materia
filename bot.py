@@ -124,6 +124,17 @@ async def cmd_scripts(message: Message):
     await message.answer(result)
 
 
+async def _keep_typing(chat_id: int):
+    """Re-send typing indicator every 4s until cancelled. Telegram's indicator
+    expires after ~5s so we refresh it to cover long intent + generation time."""
+    try:
+        while True:
+            await bot.send_chat_action(chat_id, "typing")
+            await asyncio.sleep(4)
+    except asyncio.CancelledError:
+        pass
+
+
 async def _stream_chat(message: Message, params: dict) -> str:
     """Stream a chat response to Telegram, editing a placeholder as tokens arrive."""
     from tools.builtin import build_chat_messages
@@ -131,8 +142,8 @@ async def _stream_chat(message: Message, params: dict) -> str:
 
     sent = await message.answer("▌")
     accumulated = ""
-    last_edit = asyncio.get_event_loop().time()
-    MIN_EDIT_INTERVAL = 0.5  # seconds — stay well inside Telegram rate limits
+    last_edit = 0  # Zero forces an edit on the very first token
+    MIN_EDIT_INTERVAL = 0.5  # seconds — safe within Telegram rate limits
 
     try:
         async for chunk in llm.llm_stream(messages, max_tokens=config.LLM_MAX_TOKENS):
@@ -165,33 +176,31 @@ async def handle_message(message: Message):
     user_text = message.text or ""
     logger.info(f"[Materia] Message from {message.from_user.id}: {user_text[:80]}")
 
-    await mem.conversation_add("user", user_text)
-    await ctx.check_and_compact()
+    # Start typing indicator immediately and keep it alive for the full duration
+    typing_task = asyncio.create_task(_keep_typing(message.chat.id))
 
     try:
-        await bot.send_chat_action(message.chat.id, "typing")
-    except Exception:
-        pass
+        await mem.conversation_add("user", user_text)
+        await ctx.check_and_compact()
 
-    intent = await classify_intent(user_text)
-    action = intent.get("action", "chat")
-    params = intent.get("params", {})
-    if not params.get("raw") and not params.get("query"):
-        params["raw"] = user_text
+        intent = await classify_intent(user_text)
+        action = intent.get("action", "chat")
+        params = intent.get("params", {})
+        if not params.get("raw") and not params.get("query"):
+            params["raw"] = user_text
 
-    if action == "chat":
-        # Stream the response token by token
-        result = await _stream_chat(message, params)
-    else:
-        # Tool actions are deterministic — no streaming needed
-        result = await route(intent, user_text)
-        parse_mode = "Markdown" if action == "hn_briefing" else None
-        await message.answer(truncate(result), parse_mode=parse_mode)
-        # If a new tool was just created, refresh the command menu immediately
-        if action == "create_tool":
-            await refresh_commands()
+        if action == "chat":
+            result = await _stream_chat(message, params)
+        else:
+            result = await route(intent, user_text)
+            parse_mode = "Markdown" if action == "hn_briefing" else None
+            await message.answer(truncate(result), parse_mode=parse_mode)
+            if action == "create_tool":
+                await refresh_commands()
 
-    await mem.conversation_add("assistant", result)
+        await mem.conversation_add("assistant", result)
+    finally:
+        typing_task.cancel()
 
 
 async def main():
