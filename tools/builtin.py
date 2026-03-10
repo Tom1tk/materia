@@ -169,7 +169,7 @@ async def hn_briefing(params: dict) -> str:
         score = s.get("score", 0)
         hn_url = f"https://news.ycombinator.com/item?id={s['id']}"
         summary_text = summaries[i] if i < len(summaries) else s.get("title", "")
-        lines.append(f"▲ {score} pts\n{summary_text}\n{hn_url}")
+        lines.append(f"▲ {score} pts\n{summary_text}\n[link]({hn_url})")
 
     return "\n\n".join(lines)
 

@@ -185,7 +185,8 @@ async def handle_message(message: Message):
     else:
         # Tool actions are deterministic — no streaming needed
         result = await route(intent, user_text)
-        await message.answer(truncate(result))
+        parse_mode = "Markdown" if action == "hn_briefing" else None
+        await message.answer(truncate(result), parse_mode=parse_mode)
         # If a new tool was just created, refresh the command menu immediately
         if action == "create_tool":
             await refresh_commands()
