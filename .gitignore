@@ -1,0 +1,10 @@
+.env
+data/
+scripts/
+MEMORY.md
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.log
