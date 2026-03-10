@@ -143,13 +143,35 @@ async def hn_briefing(params: dict) -> str:
     session_data = json.dumps([{"id": s["id"], "title": s.get("title", ""), "url": s.get("url", ""), "score": s.get("score", 0), "by": s.get("by", "")} for s in stories])
     await mem.session_set("hn_current_stories", session_data)
 
-    context = "\n".join(f"{i+1}. {s.get('title','')} ({s.get('score',0)} pts, by {s.get('by','')})" for i, s in enumerate(stories))
+    # Get one-line summaries as a structured array so we can pair each with metadata
+    context = "\n".join(f"{i+1}. {s.get('title', '')} (by {s.get('by', '')})" for i, s in enumerate(stories))
+    schema = {
+        "type": "object",
+        "properties": {
+            "summaries": {
+                "type": "array",
+                "items": {"type": "string"}
+            }
+        },
+        "required": ["summaries"],
+        "additionalProperties": False
+    }
     messages = [
-        {"role": "system", "content": "You are Materia. Summarise each HN story in one line. British English. Return numbered list."},
+        {"role": "system", "content": "You are Materia. For each numbered story, write a single concise sentence summarising what it is about. British English. Return exactly one summary string per story in the array, in the same order."},
         {"role": "user", "content": f"Summarise these Hacker News stories:\n{context}"}
     ]
-    summary = await llm.llm_plain(messages, max_tokens=512)
-    return f"Hacker News — top {n} stories:\n\n{summary}"
+    result = await llm.llm_structured(messages, schema)
+    summaries = result.get("summaries", [])
+
+    # Format each story: score → summary → HN link
+    lines = [f"Hacker News — top {n} stories:\n"]
+    for i, s in enumerate(stories):
+        score = s.get("score", 0)
+        hn_url = f"https://news.ycombinator.com/item?id={s['id']}"
+        summary_text = summaries[i] if i < len(summaries) else s.get("title", "")
+        lines.append(f"▲ {score} pts\n{summary_text}\n{hn_url}")
+
+    return "\n\n".join(lines)
 
 
 # ─── 4. CREATE SCRIPT ───────────────────────────────────────────────────────
