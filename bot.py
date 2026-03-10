@@ -4,11 +4,12 @@ import json
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message
+from aiogram.types import Message, BotCommand
 from aiogram.filters import Command
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 import config
+import llm
 import memory as mem
 import context as ctx
 from intent import classify_intent
@@ -98,6 +99,39 @@ async def cmd_scripts(message: Message):
     await message.answer(result)
 
 
+async def _stream_chat(message: Message, params: dict) -> str:
+    """Stream a chat response to Telegram, editing a placeholder as tokens arrive."""
+    from tools.builtin import build_chat_messages
+    messages = await build_chat_messages(params)
+
+    sent = await message.answer("▌")
+    accumulated = ""
+    last_edit = asyncio.get_event_loop().time()
+    MIN_EDIT_INTERVAL = 0.5  # seconds — stay well inside Telegram rate limits
+
+    try:
+        async for chunk in llm.llm_stream(messages, max_tokens=config.LLM_MAX_TOKENS):
+            accumulated += chunk
+            now = asyncio.get_event_loop().time()
+            if now - last_edit >= MIN_EDIT_INTERVAL:
+                try:
+                    await sent.edit_text(truncate(accumulated + "▌"))
+                    last_edit = now
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.error(f"Streaming error: {e}")
+
+    # Final edit — remove cursor, show complete text
+    final = truncate(accumulated) if accumulated else "[No response]"
+    try:
+        await sent.edit_text(final)
+    except Exception:
+        pass
+
+    return accumulated
+
+
 @dp.message(F.text)
 async def handle_message(message: Message):
     if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
@@ -106,30 +140,29 @@ async def handle_message(message: Message):
     user_text = message.text or ""
     logger.info(f"[Materia] Message from {message.from_user.id}: {user_text[:80]}")
 
-    # Store user message in history
     await mem.conversation_add("user", user_text)
-
-    # Check if compaction is needed
     await ctx.check_and_compact()
 
-    # Typing indicator
     try:
         await bot.send_chat_action(message.chat.id, "typing")
     except Exception:
         pass
 
-    # Classify intent
     intent = await classify_intent(user_text)
+    action = intent.get("action", "chat")
+    params = intent.get("params", {})
+    if not params.get("raw") and not params.get("query"):
+        params["raw"] = user_text
 
-    # Route to handler
-    result = await route(intent, user_text)
+    if action == "chat":
+        # Stream the response token by token
+        result = await _stream_chat(message, params)
+    else:
+        # Tool actions are deterministic — no streaming needed
+        result = await route(intent, user_text)
+        await message.answer(truncate(result))
 
-    # Store assistant response
     await mem.conversation_add("assistant", result)
-
-    # Send reply
-    reply = truncate(result)
-    await message.answer(reply)
 
 
 async def main():
@@ -138,6 +171,16 @@ async def main():
 
     Path("/opt/tgbot/scripts").mkdir(exist_ok=True)
     Path("/opt/tgbot/data").mkdir(exist_ok=True)
+
+    # Register command menu so "/" autocomplete works in Telegram
+    await bot.set_my_commands([
+        BotCommand(command="help",    description="Show commands and available tools"),
+        BotCommand(command="context", description="Show token usage breakdown"),
+        BotCommand(command="compact", description="Force context compaction"),
+        BotCommand(command="tools",   description="List all available tools"),
+        BotCommand(command="scripts", description="List user scripts and schedules"),
+    ])
+    logger.info("[Materia] Bot commands registered.")
 
     scheduler.start()
     logger.info("[Materia] Scheduler started.")

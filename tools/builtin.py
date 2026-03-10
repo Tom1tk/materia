@@ -22,7 +22,8 @@ MANIFEST_PATH = Path("/opt/tgbot/manifest.json")
 
 # ─── 1. CHAT ────────────────────────────────────────────────────────────────
 
-async def chat(params: dict) -> str:
+async def build_chat_messages(params: dict) -> list:
+    """Build the message list for a chat request. Shared by chat() and streaming path."""
     history = await mem.conversation_get(limit=config.HISTORY_WINDOW)
     memory_data = await mem.memory_get_all()
 
@@ -35,10 +36,13 @@ async def chat(params: dict) -> str:
 Be helpful, concise, and direct. British English, metric units, 24h time, ISO dates.{memory_text}"""
 
     messages = [{"role": "system", "content": system}] + history
-    # Add the current message if params has raw content
     if params.get("raw"):
         messages.append({"role": "user", "content": params["raw"]})
+    return messages
 
+
+async def chat(params: dict) -> str:
+    messages = await build_chat_messages(params)
     return await llm.llm_plain(messages, max_tokens=config.LLM_MAX_TOKENS)
 
 
