@@ -67,8 +67,33 @@ Available tools:
 {memory_text}
 {recent_text}
 
-Classify the user's message. Choose the most appropriate action from the tool list.
-For casual conversation or questions, use "chat".
+## Routing rules — follow these exactly:
+
+**edit_script** — use when the user wants to fix, edit, update, modify, or debug an existing script.
+  Trigger words: fix, edit, update, modify, change, debug, broken, error, issue, wrong.
+  Set `raw` to the script name or best guess at which script (e.g. "network_scanner").
+  Set `description` to the full instructions / what needs fixing.
+  NEVER use "chat" when the user is asking to fix or change a script that exists on disk.
+
+**run_shell** — use when the user wants to: install a package, run a command, delete a file,
+  rename a file, move a file, check system status, or do anything requiring a shell command.
+  Set `raw` to the ACTUAL shell command to run — not the user's words, but the real command.
+  Examples:
+    "install netifaces" → raw: "pip install netifaces"
+    "install netifaces in the venv" → raw: "/opt/tgbot/venv/bin/pip install netifaces"
+    "delete scan_network_info.py" → raw: "rm /opt/tgbot/scripts/scan_network_info.py"
+    "rename foo.py to bar.py" → raw: "mv /opt/tgbot/scripts/foo.py /opt/tgbot/scripts/bar.py"
+    "check disk space" → raw: "df -h"
+  You CAN and SHOULD run commands — you have full shell access on this server.
+
+**run_script** — use when the user wants to execute an existing script by name.
+  Set `raw` to the script name or a description to fuzzy-match against.
+
+**create_script** — use ONLY when creating a brand new script, not fixing an existing one.
+
+**chat** — use ONLY for genuine conversation, questions, or when no tool applies.
+  Do NOT use chat when an action tool would be more appropriate.
+
 Always return valid JSON with all required fields."""
 
     messages = [
