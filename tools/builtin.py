@@ -181,11 +181,20 @@ async def hn_briefing(params: dict) -> str:
 SCRIPT_SCHEMA = {
     "type": "object",
     "properties": {
-        "script": {"type": "string"},
-        "filename": {"type": "string"},
-        "description": {"type": "string"}
+        "script":       {"type": "string"},
+        "filename":     {"type": "string"},
+        "description":  {"type": "string"},
+        "dependencies": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Third-party pip packages required (empty list if none)"
+        },
+        "usage": {
+            "type": "string",
+            "description": "How to run the script, e.g. 'python script.py --arg value'"
+        }
     },
-    "required": ["script", "filename", "description"],
+    "required": ["script", "filename", "description", "dependencies", "usage"],
     "additionalProperties": False
 }
 
@@ -204,7 +213,20 @@ async def create_script(params: dict) -> str:
 
     try:
         messages = [
-            {"role": "system", "content": "You are Materia. Generate a Python script. Return JSON with script, filename (no spaces, .py extension), and description. The script must be self-contained and include all necessary imports."},
+            {
+                "role": "system",
+                "content": (
+                    "You are Materia. Generate a Python script and return JSON with these fields:\n"
+                    "- script: the full Python source code\n"
+                    "- filename: snake_case name with .py extension, no spaces\n"
+                    "- description: one sentence describing what the script does\n"
+                    "- dependencies: list of third-party pip package names required "
+                    "(stdlib modules are NOT included — empty list if no pip packages needed)\n"
+                    "- usage: a single example command showing how to run the script, "
+                    "including any required arguments\n"
+                    "The script must be self-contained and include all necessary imports."
+                )
+            },
             {"role": "user", "content": f"Create a Python script that: {description}"}
         ]
 
@@ -223,6 +245,22 @@ async def create_script(params: dict) -> str:
         filename = raw_result["filename"].replace(" ", "_")
         if not filename.endswith(".py"):
             filename += ".py"
+        deps = raw_result.get("dependencies") or []
+        usage = raw_result.get("usage", f"python {filename}").strip()
+
+        # Install dependencies if any
+        if deps:
+            await _notify(f"📦 *Installing dependencies:* `{', '.join(deps)}`")
+            pip_result = subprocess.run(
+                ["/opt/tgbot/venv/bin/pip", "install", *deps],
+                capture_output=True, text=True, timeout=120
+            )
+            if pip_result.returncode == 0:
+                await _notify(f"✅ *Dependencies installed.*")
+            else:
+                await _notify(
+                    f"⚠️ *pip install failed:*\n```\n{pip_result.stderr[:800]}\n```"
+                )
 
         SCRIPTS_DIR.mkdir(exist_ok=True)
         script_path = SCRIPTS_DIR / filename
@@ -234,7 +272,13 @@ async def create_script(params: dict) -> str:
             f"```python\n{script_code[:1200]}{'...' if len(script_code) > 1200 else ''}\n```"
         )
 
-        response = f"Script created: `{filename}`\nDescription: {raw_result['description']}"
+        response = (
+            f"Script created: `{filename}`\n"
+            f"Description: {raw_result['description']}\n"
+            f"Usage: `{usage}`"
+        )
+        if deps:
+            response += f"\nDependencies: `{', '.join(deps)}`"
 
         if test_first:
             await _notify("🧪 *Running test...*")
