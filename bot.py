@@ -189,10 +189,19 @@ async def handle_message(message: Message):
         if not params.get("raw") and not params.get("query"):
             params["raw"] = user_text
 
+        # Always show intent classification so routing is visible
+        reasoning = intent.get("reasoning", "")
+        await message.answer(
+            f"🔀 *Intent:* `{action}`\n"
+            f"*Params:* `{params}`\n"
+            f"*Reasoning:* {reasoning}",
+            parse_mode="Markdown"
+        )
+
         if action == "chat":
             result = await _stream_chat(message, params)
         else:
-            if action == "create_script":
+            if action in ("create_script", "create_tool"):
                 # Pass a notify callback so the tool can send progress updates
                 async def _notify(text: str):
                     await message.answer(truncate(text), parse_mode="Markdown")

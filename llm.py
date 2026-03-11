@@ -33,12 +33,18 @@ async def llm_structured(messages: list, schema: dict) -> dict:
                     resp.raise_for_status()
                     data = await resp.json()
                     content = data["choices"][0]["message"]["content"]
-                    return json.loads(content)
+                    logger.debug(f"LLM structured raw response: {content}")
+                    try:
+                        return json.loads(content)
+                    except json.JSONDecodeError as json_err:
+                        raise ValueError(
+                            f"LLM returned invalid JSON: {json_err}\nRaw content: {content!r}"
+                        ) from json_err
         except Exception as e:
             if attempt == 0:
-                logger.warning(f"LLM structured call failed (attempt 1): {e}, retrying...")
+                logger.warning(f"LLM structured call failed (attempt 1): {type(e).__name__}: {e}, retrying...")
                 continue
-            logger.error(f"LLM structured call failed: {e}")
+            logger.error(f"LLM structured call failed: {type(e).__name__}: {e}")
             raise
 
 async def llm_stream(messages: list, max_tokens: int = 512):

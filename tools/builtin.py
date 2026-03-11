@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import subprocess
+import traceback
 from datetime import datetime
 from pathlib import Path
 
@@ -201,42 +202,64 @@ async def create_script(params: dict) -> str:
             except Exception:
                 pass
 
-    await _notify("⚙️ Generating script...")
+    try:
+        messages = [
+            {"role": "system", "content": "You are Materia. Generate a Python script. Return JSON with script, filename (no spaces, .py extension), and description. The script must be self-contained and include all necessary imports."},
+            {"role": "user", "content": f"Create a Python script that: {description}"}
+        ]
 
-    messages = [
-        {"role": "system", "content": "You are Materia. Generate a Python script. Return JSON with script, filename (no spaces, .py extension), and description. The script must be self-contained and include all necessary imports."},
-        {"role": "user", "content": f"Create a Python script that: {description}"}
-    ]
+        await _notify(
+            f"⚙️ *Generating script...*\n\n"
+            f"*Prompt sent to LLM:*\n```\n{messages[1]['content']}\n```"
+        )
 
-    result = await llm.llm_structured(messages, SCRIPT_SCHEMA)
-    script_code = result["script"]
-    filename = result["filename"].replace(" ", "_")
-    if not filename.endswith(".py"):
-        filename += ".py"
+        raw_result = await llm.llm_structured(messages, SCRIPT_SCHEMA)
 
-    SCRIPTS_DIR.mkdir(exist_ok=True)
-    script_path = SCRIPTS_DIR / filename
-    script_path.write_text(script_code)
-    os.chmod(script_path, 0o755)
+        await _notify(
+            f"📦 *Raw LLM response:*\n```json\n{json.dumps(raw_result, indent=2)[:1500]}\n```"
+        )
 
-    await _notify(f"✅ Script generated: `{filename}`\n\n```python\n{script_code[:800]}{'...' if len(script_code) > 800 else ''}\n```")
+        script_code = raw_result["script"]
+        filename = raw_result["filename"].replace(" ", "_")
+        if not filename.endswith(".py"):
+            filename += ".py"
 
-    response = f"Script created: `{filename}`\nDescription: {result['description']}"
+        SCRIPTS_DIR.mkdir(exist_ok=True)
+        script_path = SCRIPTS_DIR / filename
+        script_path.write_text(script_code)
+        os.chmod(script_path, 0o755)
 
-    if test_first:
-        await _notify("🧪 Running test...")
-        test_result = _run_script_sync(script_path)
-        response += f"\n\nTest output:\n```\n{test_result[:500]}\n```"
+        await _notify(
+            f"✅ *Script written:* `{filename}`\n\n"
+            f"```python\n{script_code[:1200]}{'...' if len(script_code) > 1200 else ''}\n```"
+        )
+
+        response = f"Script created: `{filename}`\nDescription: {raw_result['description']}"
+
+        if test_first:
+            await _notify("🧪 *Running test...*")
+            test_result = _run_script_sync(script_path)
+            await _notify(f"🖥️ *Test output:*\n```\n{test_result[:1000]}\n```")
+            response += f"\n\nTest output:\n```\n{test_result[:500]}\n```"
+            if schedule:
+                response += f"\n\nReply 'yes' to schedule: `{schedule}`"
+                await mem.session_set(f"pending_cron_{filename}", schedule)
+            return response
+
         if schedule:
-            response += f"\n\nReply 'yes' to schedule: `{schedule}`"
-            await mem.session_set(f"pending_cron_{filename}", schedule)
+            cron_result = _add_cron_entry(filename, schedule)
+            response += f"\n\nScheduled: {schedule}\n{cron_result}"
+
         return response
 
-    if schedule:
-        cron_result = _add_cron_entry(filename, schedule)
-        response += f"\n\nScheduled: {schedule}\n{cron_result}"
-
-    return response
+    except Exception as e:
+        tb = traceback.format_exc()
+        await _notify(
+            f"❌ *create\\_script failed*\n\n"
+            f"*{type(e).__name__}:* `{e}`\n\n"
+            f"```\n{tb[-1500:]}\n```"
+        )
+        raise
 
 
 def _run_script_sync(script_path: Path) -> str:

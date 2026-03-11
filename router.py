@@ -1,4 +1,5 @@
 import logging
+import traceback
 from tools.builtin import (
     chat, web_search, hn_briefing, create_script, list_scripts,
     run_script, add_cron, remove_cron, create_tool, list_tools,
@@ -47,5 +48,10 @@ async def route(intent: dict, user_message: str) -> str:
         result = await handler(params)
         return result or "(no response)"
     except Exception as e:
-        logger.error(f"Tool '{action}' failed: {e}", exc_info=True)
-        return f"Tool '{action}' encountered an error: {type(e).__name__}: {e}"
+        tb = traceback.format_exc()
+        logger.error(f"Tool '{action}' failed: {tb}")
+        return (
+            f"❌ Tool `{action}` failed\n\n"
+            f"*{type(e).__name__}:* `{e}`\n\n"
+            f"```\n{tb[-1500:]}\n```"
+        )
