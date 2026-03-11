@@ -1,4 +1,5 @@
 import asyncio
+import html
 import logging
 import json
 from pathlib import Path
@@ -190,13 +191,17 @@ async def handle_message(message: Message):
             params["raw"] = user_text
 
         # Always show intent classification so routing is visible
-        reasoning = intent.get("reasoning", "")
-        await message.answer(
-            f"🔀 *Intent:* `{action}`\n"
-            f"*Params:* `{params}`\n"
-            f"*Reasoning:* {reasoning}",
-            parse_mode="Markdown"
-        )
+        reasoning = html.escape(intent.get("reasoning", ""))
+        params_str = html.escape(json.dumps(params, indent=2))
+        try:
+            await message.answer(
+                f"🔀 <b>Intent:</b> <code>{html.escape(action)}</code>\n"
+                f"<b>Reasoning:</b> {reasoning}\n\n"
+                f"<b>Params:</b>\n<pre>{params_str}</pre>",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.warning(f"Failed to send intent debug message: {e}")
 
         if action == "chat":
             result = await _stream_chat(message, params)

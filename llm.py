@@ -28,7 +28,7 @@ async def llm_structured(messages: list, schema: dict) -> dict:
                     f"{config.LLM_BASE_URL}/chat/completions",
                     json=payload,
                     headers={"Authorization": f"Bearer local"},
-                    timeout=aiohttp.ClientTimeout(total=30)
+                    timeout=aiohttp.ClientTimeout(total=120)
                 ) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
