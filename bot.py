@@ -26,12 +26,16 @@ bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 scheduler = AsyncIOScheduler(timezone=config.TIMEZONE)
 
+# Tracks the active handler task per chat so /cancel can kill it
+_active_tasks: dict[int, asyncio.Task] = {}
+
 
 async def refresh_commands():
     """Rebuild the Telegram command menu from manifest.json."""
     # Fixed meta-commands always at the top
     commands = [
         BotCommand(command="help",    description="Show commands and available tools"),
+        BotCommand(command="cancel",  description="Cancel the current running request"),
         BotCommand(command="context", description="Show token usage breakdown"),
         BotCommand(command="compact", description="Force context compaction"),
         BotCommand(command="tools",   description="List all available tools"),
@@ -125,6 +129,18 @@ async def cmd_scripts(message: Message):
     await message.answer(result)
 
 
+@dp.message(Command("cancel"))
+async def cmd_cancel(message: Message):
+    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+        return
+    task = _active_tasks.get(message.chat.id)
+    if task and not task.done():
+        task.cancel()
+        await message.answer("⛔ Cancelled.")
+    else:
+        await message.answer("Nothing to cancel.")
+
+
 async def _keep_typing(chat_id: int):
     """Re-send typing indicator every 4s until cancelled. Telegram's indicator
     expires after ~5s so we refresh it to cover long intent + generation time."""
@@ -174,53 +190,77 @@ async def handle_message(message: Message):
     if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
 
-    user_text = message.text or ""
-    logger.info(f"[Materia] Message from {message.from_user.id}: {user_text[:80]}")
+    async def _handle():
+        user_text = message.text or ""
+        logger.info(f"[Materia] Message from {message.from_user.id}: {user_text[:80]}")
 
-    # Start typing indicator immediately and keep it alive for the full duration
-    typing_task = asyncio.create_task(_keep_typing(message.chat.id))
+        typing_task = asyncio.create_task(_keep_typing(message.chat.id))
+        _last_notify: list[float] = [0.0]
 
-    try:
-        await mem.conversation_add("user", user_text)
-        await ctx.check_and_compact()
+        async def _notify(text: str):
+            # Enforce ≥1.5s between notify messages to avoid flood control
+            gap = asyncio.get_event_loop().time() - _last_notify[0]
+            if gap < 1.5:
+                await asyncio.sleep(1.5 - gap)
+            try:
+                await message.answer(truncate(text), parse_mode="Markdown")
+            except Exception as e:
+                logger.warning(f"notify send failed: {e}")
+            _last_notify[0] = asyncio.get_event_loop().time()
 
-        intent = await classify_intent(user_text)
-        action = intent.get("action", "chat")
-        params = intent.get("params", {})
-        if not params.get("raw") and not params.get("query"):
-            params["raw"] = user_text
-
-        # Always show intent classification so routing is visible
-        reasoning = html.escape(intent.get("reasoning", ""))
-        params_str = html.escape(json.dumps(params, indent=2))
         try:
-            await message.answer(
-                f"🔀 <b>Intent:</b> <code>{html.escape(action)}</code>\n"
-                f"<b>Reasoning:</b> {reasoning}\n\n"
-                f"<b>Params:</b>\n<pre>{params_str}</pre>",
-                parse_mode="HTML"
-            )
-        except Exception as e:
-            logger.warning(f"Failed to send intent debug message: {e}")
+            await mem.conversation_add("user", user_text)
+            await ctx.check_and_compact()
 
-        if action == "chat":
-            result = await _stream_chat(message, params)
-        else:
-            if action in ("create_script", "create_tool", "edit_script"):
-                # Pass a notify callback so the tool can send progress updates
-                async def _notify(text: str):
-                    await message.answer(truncate(text), parse_mode="Markdown")
-                params["notify"] = _notify
+            intent = await classify_intent(user_text)
+            action = intent.get("action", "chat")
+            params = intent.get("params", {})
+            if not params.get("raw") and not params.get("query"):
+                params["raw"] = user_text
 
-            result = await route(intent, user_text)
-            parse_mode = "Markdown" if action in ("hn_briefing", "create_script", "edit_script") else None
-            await message.answer(truncate(result), parse_mode=parse_mode)
-            if action == "create_tool":
-                await refresh_commands()
+            # Always show intent classification so routing is visible
+            reasoning = html.escape(intent.get("reasoning", ""))
+            params_str = html.escape(json.dumps(params, indent=2))
+            try:
+                await message.answer(
+                    f"🔀 <b>Intent:</b> <code>{html.escape(action)}</code>\n"
+                    f"<b>Reasoning:</b> {reasoning}\n\n"
+                    f"<b>Params:</b>\n<pre>{params_str}</pre>",
+                    parse_mode="HTML"
+                )
+                _last_notify[0] = asyncio.get_event_loop().time()
+            except Exception as e:
+                logger.warning(f"Failed to send intent debug message: {e}")
 
-        await mem.conversation_add("assistant", result)
+            if action == "chat":
+                result = await _stream_chat(message, params)
+            else:
+                if action in ("create_script", "create_tool", "edit_script"):
+                    params["notify"] = _notify
+
+                result = await route(intent, user_text)
+                parse_mode = "Markdown" if action in ("hn_briefing", "create_script", "edit_script") else None
+                await message.answer(truncate(result), parse_mode=parse_mode)
+                if action == "create_tool":
+                    await refresh_commands()
+
+            await mem.conversation_add("assistant", result)
+        except asyncio.CancelledError:
+            logger.info(f"[Materia] Request cancelled by user")
+            raise
+        finally:
+            typing_task.cancel()
+
+    task = asyncio.create_task(_handle())
+    _active_tasks[message.chat.id] = task
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.error(f"handle_message error: {e}", exc_info=True)
     finally:
-        typing_task.cancel()
+        _active_tasks.pop(message.chat.id, None)
 
 
 async def main():
