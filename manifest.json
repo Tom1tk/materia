@@ -11,6 +11,8 @@
     {"name": "create_tool", "description": "Create a new tool by describing it in plain English", "builtin": true, "added": "2026-01-01"},
     {"name": "list_tools", "description": "List all available tools", "builtin": true, "added": "2026-01-01"},
     {"name": "memory_set", "description": "Save a preference or fact (key: value)", "builtin": true, "added": "2026-01-01"},
-    {"name": "memory_get", "description": "Retrieve a stored preference or fact", "builtin": true, "added": "2026-01-01"}
+    {"name": "memory_get", "description": "Retrieve a stored preference or fact", "builtin": true, "added": "2026-01-01"},
+    {"name": "run_shell", "description": "Run a shell command or install a package (e.g. pip install)", "builtin": true, "added": "2026-03-11"},
+    {"name": "edit_script", "description": "Edit or fix an existing script based on instructions", "builtin": true, "added": "2026-03-11"}
   ]
 }

@@ -569,3 +569,152 @@ async def memory_get_tool(params: dict) -> str:
     if val is None:
         return f"No memory entry found for: {key}"
     return f"{key}: {val}"
+
+
+# ─── 13. RUN SHELL ──────────────────────────────────────────────────────────
+
+async def run_shell(params: dict) -> str:
+    cmd = params.get("raw", "").strip()
+    if not cmd:
+        return "No command provided."
+    try:
+        result = subprocess.run(
+            cmd, shell=True, capture_output=True, text=True, timeout=60,
+            env={**os.environ, "PATH": "/opt/tgbot/venv/bin:/usr/local/bin:/usr/bin:/bin"}
+        )
+        output = (result.stdout + result.stderr).strip()
+        status = f"(exit {result.returncode})" if result.returncode != 0 else "(ok)"
+        return f"```\n$ {cmd}\n{output[:1500] or '(no output)'}\n{status}\n```"
+    except subprocess.TimeoutExpired:
+        return f"Command timed out after 60s: `{cmd}`"
+    except Exception as e:
+        return f"Error running command: {e}"
+
+
+# ─── 14. EDIT SCRIPT ────────────────────────────────────────────────────────
+
+EDIT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "script":       {"type": "string"},
+        "description":  {"type": "string"},
+        "dependencies": {"type": "array", "items": {"type": "string"}},
+        "usage":        {"type": "string"}
+    },
+    "required": ["script", "description", "dependencies", "usage"],
+    "additionalProperties": False
+}
+
+async def edit_script(params: dict) -> str:
+    raw         = params.get("raw", "").strip()
+    instructions = params.get("description", raw)
+    notify      = params.get("notify")
+
+    async def _notify(text: str):
+        if notify:
+            try:
+                await notify(text)
+            except Exception:
+                pass
+
+    # Resolve script name with same fuzzy logic as run_script
+    scripts = list(SCRIPTS_DIR.glob("*.py"))
+    if not scripts:
+        return "No scripts found in /opt/tgbot/scripts/"
+
+    STOPWORDS = {"can", "you", "fix", "edit", "update", "modify", "change", "the",
+                 "a", "an", "my", "this", "that", "script", "file", "please", "it"}
+
+    # Try exact match first
+    candidate = raw if raw.endswith(".py") else raw + ".py"
+    script_path = SCRIPTS_DIR / candidate
+    if not script_path.exists():
+        tokens = [
+            t.lower() for t in raw.replace("-", " ").replace("_", " ").split()
+            if t.lower() not in STOPWORDS
+        ]
+        best_score, best = 0, None
+        for s in scripts:
+            stem = s.stem.replace("-", " ").replace("_", " ").lower()
+            score = sum(1 for t in tokens if t in stem)
+            if score > best_score:
+                best_score, best = score, s
+        if best and best_score > 0:
+            script_path = best
+        else:
+            available = ", ".join(s.name for s in sorted(scripts))
+            return f"Couldn't find a script matching '{raw}'.\nAvailable: {available}"
+
+    current_code = script_path.read_text()
+    await _notify(
+        f"✏️ *Editing:* `{script_path.name}`\n\n"
+        f"*Instructions:* {instructions}"
+    )
+
+    try:
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You are Materia. The user wants to modify an existing Python script. "
+                    "Return the complete updated script as JSON with fields:\n"
+                    "- script: the full updated Python source (not a diff — the complete file)\n"
+                    "- description: one sentence describing what the script now does\n"
+                    "- dependencies: list of third-party pip packages required (empty if none)\n"
+                    "- usage: example command to run the script\n"
+                    "Preserve all existing functionality unless explicitly told to remove it."
+                )
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Current script ({script_path.name}):\n```python\n{current_code}\n```\n\n"
+                    f"Instructions: {instructions}"
+                )
+            }
+        ]
+
+        raw_result = await llm.llm_structured(messages, EDIT_SCHEMA)
+
+        await _notify(
+            f"📦 *Raw LLM response:*\n```json\n{json.dumps(raw_result, indent=2)[:1500]}\n```"
+        )
+
+        new_code = raw_result["script"]
+        deps     = raw_result.get("dependencies") or []
+        usage    = raw_result.get("usage", f"python {script_path.name}").strip()
+
+        if deps:
+            await _notify(f"📦 *Installing dependencies:* `{', '.join(deps)}`")
+            pip_result = subprocess.run(
+                ["/opt/tgbot/venv/bin/pip", "install", *deps],
+                capture_output=True, text=True, timeout=120
+            )
+            if pip_result.returncode == 0:
+                await _notify("✅ *Dependencies installed.*")
+            else:
+                await _notify(f"⚠️ *pip install failed:*\n```\n{pip_result.stderr[:800]}\n```")
+
+        script_path.write_text(new_code)
+        os.chmod(script_path, 0o755)
+
+        await _notify(
+            f"✅ *Script updated:* `{script_path.name}`\n\n"
+            f"```python\n{new_code[:1200]}{'...' if len(new_code) > 1200 else ''}\n```"
+        )
+
+        return (
+            f"Script updated: `{script_path.name}`\n"
+            f"Description: {raw_result['description']}\n"
+            f"Usage: `{usage}`"
+            + (f"\nDependencies: `{', '.join(deps)}`" if deps else "")
+        )
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        await _notify(
+            f"❌ *edit\\_script failed*\n\n"
+            f"*{type(e).__name__}:* `{e}`\n\n"
+            f"```\n{tb[-1500:]}\n```"
+        )
+        raise

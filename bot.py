@@ -206,14 +206,14 @@ async def handle_message(message: Message):
         if action == "chat":
             result = await _stream_chat(message, params)
         else:
-            if action in ("create_script", "create_tool"):
+            if action in ("create_script", "create_tool", "edit_script"):
                 # Pass a notify callback so the tool can send progress updates
                 async def _notify(text: str):
                     await message.answer(truncate(text), parse_mode="Markdown")
                 params["notify"] = _notify
 
             result = await route(intent, user_text)
-            parse_mode = "Markdown" if action in ("hn_briefing", "create_script") else None
+            parse_mode = "Markdown" if action in ("hn_briefing", "create_script", "edit_script") else None
             await message.answer(truncate(result), parse_mode=parse_mode)
             if action == "create_tool":
                 await refresh_commands()
