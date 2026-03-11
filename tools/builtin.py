@@ -192,6 +192,16 @@ async def create_script(params: dict) -> str:
     description = params.get("description", "")
     schedule = params.get("schedule", "")
     test_first = params.get("test_first", True)
+    notify = params.get("notify")  # optional async callback for progress updates
+
+    async def _notify(text: str):
+        if notify:
+            try:
+                await notify(text)
+            except Exception:
+                pass
+
+    await _notify("⚙️ Generating script...")
 
     messages = [
         {"role": "system", "content": "You are Materia. Generate a Python script. Return JSON with script, filename (no spaces, .py extension), and description. The script must be self-contained and include all necessary imports."},
@@ -209,13 +219,16 @@ async def create_script(params: dict) -> str:
     script_path.write_text(script_code)
     os.chmod(script_path, 0o755)
 
-    response = f"Script created: {filename}\n\nDescription: {result['description']}\n\n```python\n{script_code[:1000]}{'...(truncated)' if len(script_code) > 1000 else ''}\n```"
+    await _notify(f"✅ Script generated: `{filename}`\n\n```python\n{script_code[:800]}{'...' if len(script_code) > 800 else ''}\n```")
+
+    response = f"Script created: `{filename}`\nDescription: {result['description']}"
 
     if test_first:
+        await _notify("🧪 Running test...")
         test_result = _run_script_sync(script_path)
-        response += f"\n\nTest run output:\n```\n{test_result[:500]}\n```"
+        response += f"\n\nTest output:\n```\n{test_result[:500]}\n```"
         if schedule:
-            response += f"\n\nReply 'yes' to schedule this with cron: `{schedule}`"
+            response += f"\n\nReply 'yes' to schedule: `{schedule}`"
             await mem.session_set(f"pending_cron_{filename}", schedule)
         return response
 
@@ -321,15 +334,42 @@ async def list_scripts(params: dict) -> str:
 # ─── 6. RUN SCRIPT ──────────────────────────────────────────────────────────
 
 async def run_script(params: dict) -> str:
-    name = params.get("raw", "").strip()
-    if not name:
+    raw = params.get("raw", "").strip()
+    if not raw:
         return "Please specify a script name."
-    if not name.endswith(".py"):
-        name += ".py"
-    script_path = SCRIPTS_DIR / name
-    if not script_path.exists():
-        return f"Script not found: {name}"
-    return _run_script_sync(script_path)
+
+    scripts = list(SCRIPTS_DIR.glob("*.py"))
+    if not scripts:
+        return "No scripts found in /opt/tgbot/scripts/"
+
+    # Try exact match first
+    exact_name = raw if raw.endswith(".py") else raw + ".py"
+    exact_path = SCRIPTS_DIR / exact_name
+    if exact_path.exists():
+        output = _run_script_sync(exact_path)
+        return f"Ran `{exact_name}`:\n```\n{output}\n```"
+
+    # Fuzzy match: score each script by token overlap with the user's message
+    STOPWORDS = {"can", "you", "run", "the", "for", "me", "please", "a", "an",
+                 "and", "my", "just", "script", "file", "it", "that", "this"}
+    tokens = [
+        t.lower() for t in raw.replace("-", " ").replace("_", " ").split()
+        if t.lower() not in STOPWORDS
+    ]
+
+    best_score, best_script = 0, None
+    for s in scripts:
+        stem = s.stem.replace("-", " ").replace("_", " ").lower()
+        score = sum(1 for t in tokens if t in stem)
+        if score > best_score:
+            best_score, best_script = score, s
+
+    if best_script and best_score > 0:
+        output = _run_script_sync(best_script)
+        return f"Ran `{best_script.name}`:\n```\n{output}\n```"
+
+    available = ", ".join(s.name for s in sorted(scripts))
+    return f"Couldn't find a script matching '{raw}'.\nAvailable: {available}"
 
 
 # ─── 7. ADD CRON ────────────────────────────────────────────────────────────

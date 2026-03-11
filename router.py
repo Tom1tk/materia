@@ -48,4 +48,4 @@ async def route(intent: dict, user_message: str) -> str:
         return result or "(no response)"
     except Exception as e:
         logger.error(f"Tool '{action}' failed: {e}", exc_info=True)
-        return f"Tool '{action}' encountered an error: {e}"
+        return f"Tool '{action}' encountered an error: {type(e).__name__}: {e}"
