@@ -321,6 +321,13 @@ def _run_script_sync(script_path: Path) -> str:
 
 
 def _add_cron_entry(filename: str, schedule: str) -> str:
+    # Validate schedule is 5 fields before touching crontab
+    if len(schedule.split()) != 5:
+        return f"Invalid cron schedule '{schedule}' — must be 5 fields (e.g. '0 8 * * 1-5')."
+    # Refuse to write an entry for a script that doesn't exist
+    script_path = SCRIPTS_DIR / filename
+    if not script_path.exists():
+        return f"Script not found: {filename} — cron entry not added."
     try:
         result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
         existing = result.stdout if result.returncode == 0 else ""
@@ -446,6 +453,9 @@ async def add_cron(params: dict) -> str:
     schedule = params.get("schedule", "").strip()
     if not name or not schedule:
         return "Please provide both a script name and a cron schedule."
+    # Sanitize: spaces → underscores, strip anything that isn't alphanumeric, dash, underscore, or dot
+    import re
+    name = re.sub(r"[^\w.\-]", "_", name.replace(" ", "_"))
     if not name.endswith(".py"):
         name += ".py"
     return _add_cron_entry(name, schedule)
