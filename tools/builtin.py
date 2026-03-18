@@ -218,7 +218,10 @@ async def create_script(params: dict) -> str:
                 "content": (
                     "You are Materia. Generate a Python script and return JSON with these fields:\n"
                     "- script: the full Python source code\n"
-                    "- filename: snake_case name with .py extension, no spaces\n"
+                    "- filename: snake_case name describing what the script DOES, with .py extension, no spaces.\n"
+                    "  Name it after the function, not the user's request.\n"
+                    "  Good: 'hn_briefing_daily.py', 'disk_usage_check.py', 'network_scanner.py'\n"
+                    "  Bad: 'can_you_add_a_cron.py', 'write_a_script_that.py', 'please_make.py'\n"
                     "- description: one sentence describing what the script does\n"
                     "- dependencies: list of third-party pip package names required "
                     "(stdlib modules are NOT included — empty list if no pip packages needed)\n"
@@ -291,7 +294,7 @@ async def create_script(params: dict) -> str:
             return response
 
         if schedule:
-            cron_result = _add_cron_entry(filename, schedule)
+            cron_result = _add_cron_entry(filename, schedule, raw_result.get("description", ""))
             response += f"\n\nScheduled: {schedule}\n{cron_result}"
 
         return response
@@ -320,7 +323,7 @@ def _run_script_sync(script_path: Path) -> str:
         return f"Error running script: {e}"
 
 
-def _add_cron_entry(filename: str, schedule: str) -> str:
+def _add_cron_entry(filename: str, schedule: str, description: str = "") -> str:
     # Validate schedule is 5 fields before touching crontab
     if len(schedule.split()) != 5:
         return f"Invalid cron schedule '{schedule}' — must be 5 fields (e.g. '0 8 * * 1-5')."
@@ -331,9 +334,11 @@ def _add_cron_entry(filename: str, schedule: str) -> str:
     try:
         result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
         existing = result.stdout if result.returncode == 0 else ""
-        entry = f"{schedule} /opt/tgbot/venv/bin/python /opt/tgbot/scripts/{filename}\n"
-        if entry.strip() in existing:
+        cmd = f"{schedule} /opt/tgbot/venv/bin/python /opt/tgbot/scripts/{filename}"
+        if cmd in existing:
             return "Cron entry already exists."
+        comment = f"# {description}" if description else f"# {filename}"
+        entry = f"{comment}\n{cmd}\n"
         new_crontab = existing + entry
         proc = subprocess.run(["crontab", "-"], input=new_crontab, capture_output=True, text=True)
         if proc.returncode == 0:
@@ -458,7 +463,7 @@ async def add_cron(params: dict) -> str:
     name = re.sub(r"[^\w.\-]", "_", name.replace(" ", "_"))
     if not name.endswith(".py"):
         name += ".py"
-    return _add_cron_entry(name, schedule)
+    return _add_cron_entry(name, schedule, params.get("description", ""))
 
 
 # ─── 8. REMOVE CRON ─────────────────────────────────────────────────────────
