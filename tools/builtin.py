@@ -7,6 +7,7 @@ import subprocess
 import traceback
 from datetime import datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import aiohttp
 
@@ -28,13 +29,49 @@ async def build_chat_messages(params: dict) -> list:
     history = await mem.conversation_get(limit=config.HISTORY_WINDOW)
     memory_data = await mem.memory_get_all()
 
+    # Grounding: current datetime in configured timezone
+    now = datetime.now(ZoneInfo(config.TIMEZONE))
+    current_dt = now.strftime("%A, %Y-%m-%d %H:%M %Z")
+
+    # Grounding: available tools
+    try:
+        with open(MANIFEST_PATH) as f:
+            _manifest = json.load(f)
+        tools_list = ", ".join(t["name"] for t in _manifest["tools"])
+    except Exception:
+        tools_list = "unavailable"
+
+    # Grounding: scripts on disk
+    scripts = sorted(p.name for p in SCRIPTS_DIR.glob("*.py")) if SCRIPTS_DIR.exists() else []
+    scripts_list = ", ".join(scripts) if scripts else "none"
+
+    # Memory context
     memory_text = ""
     if memory_data:
         items = list(memory_data.items())[:20]
         memory_text = "\nUser preferences:\n" + "\n".join(f"- {k}: {v}" for k, v in items)
 
     system = f"""You are Materia — a local-first personal assistant. Small spells. Real magic.
-Be helpful, concise, and direct. British English, metric units, 24h time, ISO dates.{memory_text}"""
+Be helpful, concise, and direct. British English, metric units, 24h time, ISO dates.
+
+## System facts (authoritative — do not contradict these)
+- Active model: {config.LLM_MODEL}
+- Current date/time: {current_dt}
+- Available tools: {tools_list}
+- Scripts on disk: {scripts_list}
+
+## Capability boundary for this turn
+This is a conversational reply. You do not have tool access right now.
+If the user is asking you to run a command, edit a script, fetch live data, or take any action,
+tell them plainly what you would do rather than pretending to execute it.
+Example: "I can't run that in a chat reply — say something like 'check disk space' and I'll execute it."
+
+## Honesty rules (mandatory)
+- If you do not know something, say so directly. Do not guess or extrapolate.
+- Do not invent file paths, environment variables, command output, model names, version numbers,
+  or any results you have not been explicitly given.
+- Do not roleplay executing a tool or pretend you ran a command.
+- If asked about your model, version, or configuration, quote only the system facts above.{memory_text}"""
 
     messages = [{"role": "system", "content": system}] + history
     if params.get("raw"):

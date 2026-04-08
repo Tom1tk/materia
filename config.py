@@ -20,3 +20,6 @@ HISTORY_WINDOW = int(os.getenv("HISTORY_WINDOW", "8"))
 
 SEARXNG_URL = os.getenv("SEARXNG_URL", "")
 TIMEZONE = os.getenv("TIMEZONE", "Europe/London")
+
+AGENT_MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "6"))
+AGENT_MAX_SECONDS = int(os.getenv("AGENT_MAX_SECONDS", "600"))

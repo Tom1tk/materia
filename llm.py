@@ -47,13 +47,15 @@ async def llm_structured(messages: list, schema: dict) -> dict:
             logger.error(f"LLM structured call failed: {type(e).__name__}: {e}")
             raise
 
-async def llm_stream(messages: list, max_tokens: int = 512):
+async def llm_stream(messages: list, max_tokens: int = 512, temperature: float | None = None):
     """Stream plain text response from llama-server via SSE. Yields text chunks."""
     payload = {
         "model": config.LLM_MODEL,
         "messages": messages,
-        "temperature": config.LLM_TEMPERATURE,
+        "temperature": temperature if temperature is not None else config.LLM_TEMPERATURE,
         "max_tokens": max_tokens,
+        "top_p": 0.9,
+        "min_p": 0.05,
         "stream": True,
     }
     try:
@@ -84,12 +86,12 @@ async def llm_stream(messages: list, max_tokens: int = 512):
         yield f"[LLM error: {e}]"
 
 
-async def llm_plain(messages: list, max_tokens: int = 512) -> str:
+async def llm_plain(messages: list, max_tokens: int = 512, temperature: float | None = None) -> str:
     """Call llama-server for plain text response. Returns string."""
     payload = {
         "model": config.LLM_MODEL,
         "messages": messages,
-        "temperature": config.LLM_TEMPERATURE,
+        "temperature": temperature if temperature is not None else config.LLM_TEMPERATURE,
         "max_tokens": max_tokens,
     }
     for attempt in range(2):

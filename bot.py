@@ -13,6 +13,7 @@ import config
 import llm
 import memory as mem
 import context as ctx
+import agent
 from intent import classify_intent
 from router import route
 
@@ -163,7 +164,7 @@ async def _stream_chat(message: Message, params: dict) -> str:
     MIN_EDIT_INTERVAL = 0.5  # seconds — safe within Telegram rate limits
 
     try:
-        async for chunk in llm.llm_stream(messages, max_tokens=config.LLM_MAX_TOKENS):
+        async for chunk in llm.llm_stream(messages, max_tokens=config.LLM_MAX_TOKENS, temperature=0.3):
             accumulated += chunk
             now = asyncio.get_event_loop().time()
             if now - last_edit >= MIN_EDIT_INTERVAL:
@@ -209,22 +210,22 @@ async def handle_message(message: Message):
             _last_notify[0] = asyncio.get_event_loop().time()
 
         try:
-            await mem.conversation_add("user", user_text)
+            user_conv_id = await mem.conversation_add("user", user_text)
             await ctx.check_and_compact()
 
             intent = await classify_intent(user_text)
+            mode = intent.get("mode", "chat")
             action = intent.get("action", "chat")
             params = intent.get("params", {})
             if not params.get("raw") and not params.get("query"):
                 params["raw"] = user_text
 
             # Always show intent classification so routing is visible
-            reasoning = html.escape(intent.get("reasoning", ""))
             params_str = html.escape(json.dumps(params, indent=2))
+            mode_label = html.escape(f"{mode}/{action}" if mode != "chat" else "chat")
             try:
                 await message.answer(
-                    f"🔀 <b>Intent:</b> <code>{html.escape(action)}</code>\n"
-                    f"<b>Reasoning:</b> {reasoning}\n\n"
+                    f"🔀 <b>Intent:</b> <code>{mode_label}</code>\n"
                     f"<b>Params:</b>\n<pre>{params_str}</pre>",
                     parse_mode="HTML"
                 )
@@ -232,9 +233,17 @@ async def handle_message(message: Message):
             except Exception as e:
                 logger.warning(f"Failed to send intent debug message: {e}")
 
-            if action == "chat":
+            if mode == "chat":
                 result = await _stream_chat(message, params)
+            elif mode == "agentic_task":
+                result = await agent.run_agent_loop(
+                    user_text=user_text,
+                    notify=_notify,
+                    conversation_id=user_conv_id,
+                )
+                await message.answer(truncate(result))
             else:
+                # simple_tool path — existing single-shot dispatch
                 if action in ("create_script", "create_tool", "edit_script"):
                     params["notify"] = _notify
 

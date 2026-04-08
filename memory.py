@@ -1,6 +1,7 @@
 import aiosqlite
 import json
 import logging
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -21,6 +22,18 @@ async def init_db():
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS tool_calls (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER,
+                step_index INTEGER NOT NULL DEFAULT 0,
+                tool TEXT NOT NULL,
+                params TEXT NOT NULL,
+                status TEXT NOT NULL,
+                output TEXT NOT NULL,
+                duration_ms INTEGER,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id)
             );
             CREATE TABLE IF NOT EXISTS session (
                 key TEXT PRIMARY KEY,
@@ -60,22 +73,73 @@ async def memory_get_all() -> dict:
             rows = await cursor.fetchall()
             return {row[0]: row[1] for row in rows}
 
-async def conversation_add(role: str, content: str):
+async def conversation_add(role: str, content: str) -> int:
+    """Insert a conversation turn and return its row id."""
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute(
+        cursor = await db.execute(
             "INSERT INTO conversations (role, content) VALUES (?, ?)",
             (role, content)
         )
         await db.commit()
+        return cursor.lastrowid
 
-async def conversation_get(limit: int = 8) -> list[dict]:
+async def conversation_add_tool_call(
+    conversation_id: int,
+    step_index: int,
+    tool: str,
+    params: dict,
+    status: str,
+    output: str,
+    duration_ms: int | None = None,
+):
+    """Record a tool call associated with a conversation turn."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO tool_calls (conversation_id, step_index, tool, params, status, output, duration_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (conversation_id, step_index, tool, json.dumps(params), status, output, duration_ms)
+        )
+        await db.commit()
+
+async def conversation_get(limit: int = 8, include_tools: bool = False) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
         async with db.execute(
-            "SELECT role, content FROM conversations ORDER BY id DESC LIMIT ?",
+            "SELECT id, role, content FROM conversations ORDER BY id DESC LIMIT ?",
             (limit,)
         ) as cursor:
             rows = await cursor.fetchall()
-            return [{"role": r[0], "content": r[1]} for r in reversed(rows)]
+        turns = [{"id": r[0], "role": r[1], "content": r[2]} for r in reversed(rows)]
+
+        if not include_tools:
+            return [{"role": t["role"], "content": t["content"]} for t in turns]
+
+        # Interleave tool_calls for the returned conversation ids
+        ids = [t["id"] for t in turns]
+        if not ids:
+            return []
+        placeholders = ",".join("?" * len(ids))
+        async with db.execute(
+            f"SELECT conversation_id, step_index, tool, params, status, output "
+            f"FROM tool_calls WHERE conversation_id IN ({placeholders}) ORDER BY id ASC",
+            ids
+        ) as cursor:
+            tool_rows = await cursor.fetchall()
+
+        # Build a map from conv_id → list of tool messages
+        from collections import defaultdict
+        tool_map = defaultdict(list)
+        for conv_id, step_idx, tool, params_json, status, output in tool_rows:
+            prefix = "✅" if status == "ok" else "❌"
+            tool_map[conv_id].append({
+                "role": "tool",
+                "content": f"{prefix} Step {step_idx} · {tool}\n{output}"
+            })
+
+        result = []
+        for turn in turns:
+            result.append({"role": turn["role"], "content": turn["content"]})
+            result.extend(tool_map.get(turn["id"], []))
+        return result
 
 async def conversation_get_all() -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:

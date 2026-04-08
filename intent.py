@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 INTENT_SCHEMA = {
     "type": "object",
     "properties": {
+        "mode": {"type": "string", "enum": ["chat", "simple_tool", "agentic_task"]},
         "action": {"type": "string"},
         "params": {
             "type": "object",
@@ -26,7 +27,7 @@ INTENT_SCHEMA = {
         "reasoning": {"type": "string"},
         "needs_followup": {"type": "boolean"}
     },
-    "required": ["action", "params", "reasoning", "needs_followup"],
+    "required": ["mode", "action", "params", "reasoning", "needs_followup"],
     "additionalProperties": False
 }
 
@@ -67,34 +68,41 @@ Available tools:
 {memory_text}
 {recent_text}
 
-## Routing rules — follow these exactly:
+## Mode selection — set `mode` to one of:
 
-**edit_script** — use when the user wants to fix, edit, update, modify, or debug an existing script.
+**chat** — pure conversation, factual questions, explanations. No tool needed.
+  Examples: "what time is it", "explain cron syntax", "how are you"
+
+**simple_tool** — a clear single-step action maps directly to one tool.
+  Examples: "list my scripts", "what's the weather script schedule", "save my timezone as Europe/London",
+  "run the network scanner", "search for python asyncio tutorial"
+
+**agentic_task** — requires investigation, multiple steps, or verification before the task is complete.
+  Examples: "why isn't weather-morning running", "check disk usage and clean up if needed",
+  "fix the cron for weather-event", "make sure the HN briefing script actually works",
+  "install netifaces and verify it imported correctly", "set up a daily briefing"
+  Use this whenever the task involves: debugging, multi-step sequences, checking then acting,
+  or any uncertainty about what needs to happen. Set `action` to "agentic_task".
+
+## Routing rules for simple_tool — follow exactly:
+
+**edit_script** — user wants to fix, edit, update, modify, or debug an existing script.
   Trigger words: fix, edit, update, modify, change, debug, broken, error, issue, wrong.
-  Set `raw` to the script name or best guess at which script (e.g. "network_scanner").
-  Set `description` to the full instructions / what needs fixing.
-  NEVER use "chat" when the user is asking to fix or change a script that exists on disk.
+  Set `raw` to the script name or best guess. Set `description` to what needs fixing.
 
-**run_shell** — use when the user wants to: install a package, run a command, delete a file,
-  rename a file, move a file, check system status, or do anything requiring a shell command.
-  Set `raw` to the ACTUAL shell command to run — not the user's words, but the real command.
-  Examples:
-    "install netifaces" → raw: "pip install netifaces"
-    "install netifaces in the venv" → raw: "/opt/tgbot/venv/bin/pip install netifaces"
-    "delete scan_network_info.py" → raw: "rm /opt/tgbot/scripts/scan_network_info.py"
-    "rename foo.py to bar.py" → raw: "mv /opt/tgbot/scripts/foo.py /opt/tgbot/scripts/bar.py"
-    "check disk space" → raw: "df -h"
-  You CAN and SHOULD run commands — you have full shell access on this server.
+**run_shell** — user wants to run a command, install a package, delete/rename/move a file, or check system status.
+  Set `raw` to the ACTUAL shell command (not the user's words).
+  Examples: "install netifaces" → raw: "pip install netifaces"
+            "check disk space" → raw: "df -h"
+            "delete foo.py" → raw: "rm /opt/tgbot/scripts/foo.py"
 
-**run_script** — use when the user wants to execute an existing script by name.
-  Set `raw` to the script name or a description to fuzzy-match against.
+**run_script** — user wants to execute an existing script. Set `raw` to script name.
 
-**create_script** — use ONLY when creating a brand new script, not fixing an existing one.
+**create_script** — creating a brand new script only.
 
-**chat** — use ONLY for genuine conversation, questions, or when no tool applies.
-  Do NOT use chat when an action tool would be more appropriate.
+**chat** — mode=chat, action=chat for genuine conversation when no tool applies.
 
-Always return valid JSON with all required fields."""
+Always return valid JSON with all required fields. For agentic_task, set action="agentic_task"."""
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -108,6 +116,7 @@ Always return valid JSON with all required fields."""
     except Exception as e:
         logger.error(f"Intent classification failed: {e}")
         return {
+            "mode": "chat",
             "action": "chat",
             "params": {"raw": user_message},
             "reasoning": "fallback due to classification error",

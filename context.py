@@ -67,16 +67,22 @@ async def compact(history: list[dict] = None):
 
     history_text = "\n".join(f"{m['role'].upper()}: {m['content']}" for m in history)
     messages = [
-        {"role": "system", "content": "You are a memory compaction assistant. Write in British English, metric units, 24h time, ISO dates."},
+        {"role": "system", "content": (
+            "You are a memory compaction assistant. Write in British English, metric units, 24h time, ISO dates.\n"
+            "Only record facts explicitly stated by the user or confirmed in tool output. "
+            "If you cannot cite a specific turn as the source, omit the bullet. "
+            "Do not infer, interpolate, or add context not present in the transcript."
+        )},
         {"role": "user", "content": (
             "Summarise the following conversation into a compact memory note.\n"
-            "Extract: key facts learned, decisions made, tasks completed, user preferences expressed, "
-            "any scripts or tools created. Write as concise bullet points. Omit small talk. Max 200 words.\n\n"
+            "Extract: key facts the user stated, decisions confirmed, tasks that actually completed, "
+            "user preferences expressed directly, scripts or tools created. "
+            "Write as concise bullet points. Omit small talk and speculation. Max 200 words.\n\n"
             f"{history_text}"
         )}
     ]
 
-    summary = await llm.llm_plain(messages, max_tokens=400)
+    summary = await llm.llm_plain(messages, max_tokens=400, temperature=0.2)
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     section = f"\n## {timestamp}\n{summary}\n"
 
@@ -88,12 +94,12 @@ async def compact(history: list[dict] = None):
         f.write(section)
 
     # Extract key facts into SQLite memory table
-    # Parse bullet points and store as compaction_N keys
+    # Prefix keys with compacted_ so they can be distinguished from user-set facts
     lines = [l.strip("- •").strip() for l in summary.splitlines() if l.strip().startswith(("-", "•"))]
     for i, line in enumerate(lines[:10]):
         if ":" in line:
             key, val = line.split(":", 1)
-            await mem.memory_set(key.strip().lower().replace(" ", "_"), val.strip())
+            await mem.memory_set("compacted_" + key.strip().lower().replace(" ", "_"), val.strip())
 
     # Clear history, keep last 2
     await mem.conversation_clear(keep_last=2)

@@ -1,18 +1,18 @@
 {
   "tools": [
-    {"name": "chat", "description": "General conversation and questions", "builtin": true, "added": "2026-01-01"},
-    {"name": "web_search", "description": "Search the web and summarise results", "builtin": true, "added": "2026-01-01"},
-    {"name": "hn_briefing", "description": "Hacker News briefing with drill-down support", "builtin": true, "added": "2026-01-01"},
-    {"name": "create_script", "description": "Generate a Python script and optionally schedule it", "builtin": true, "added": "2026-01-01"},
-    {"name": "list_scripts", "description": "List all scripts and their cron schedules", "builtin": true, "added": "2026-01-01"},
-    {"name": "run_script", "description": "Manually run a script by name", "builtin": true, "added": "2026-01-01"},
-    {"name": "add_cron", "description": "Add or modify a cron entry for a script", "builtin": true, "added": "2026-01-01"},
-    {"name": "remove_cron", "description": "Remove a cron entry for a script", "builtin": true, "added": "2026-01-01"},
-    {"name": "create_tool", "description": "Create a new tool by describing it in plain English", "builtin": true, "added": "2026-01-01"},
-    {"name": "list_tools", "description": "List all available tools", "builtin": true, "added": "2026-01-01"},
-    {"name": "memory_set", "description": "Save a preference or fact (key: value)", "builtin": true, "added": "2026-01-01"},
-    {"name": "memory_get", "description": "Retrieve a stored preference or fact", "builtin": true, "added": "2026-01-01"},
-    {"name": "run_shell", "description": "Run a shell command or install a package (e.g. pip install)", "builtin": true, "added": "2026-03-11"},
-    {"name": "edit_script", "description": "Edit or fix an existing script based on instructions", "builtin": true, "added": "2026-03-11"}
+    {"name": "chat", "description": "General conversation and questions", "builtin": true, "added": "2026-01-01", "params": {"raw": "string — the user's message"}},
+    {"name": "web_search", "description": "Search the web and summarise results", "builtin": true, "added": "2026-01-01", "params": {"query": "string — search query", "length": "string — 'short', 'medium', or 'long'"}},
+    {"name": "hn_briefing", "description": "Hacker News briefing with drill-down support", "builtin": true, "added": "2026-01-01", "params": {"topic": "string — optional topic to filter by"}},
+    {"name": "create_script", "description": "Generate a Python script and optionally schedule it", "builtin": true, "added": "2026-01-01", "params": {"description": "string — what the script should do", "schedule": "string — cron expression e.g. '0 8 * * 1-5' (optional)", "test_first": "boolean — run after creation (default true)"}},
+    {"name": "list_scripts", "description": "List all scripts and their cron schedules", "builtin": true, "added": "2026-01-01", "params": {}},
+    {"name": "run_script", "description": "Manually run a script by name", "builtin": true, "added": "2026-01-01", "params": {"raw": "string — script name or partial name to fuzzy-match"}},
+    {"name": "add_cron", "description": "Add or modify a cron entry for a script", "builtin": true, "added": "2026-01-01", "params": {"raw": "string — script filename", "schedule": "string — cron expression e.g. '0 8 * * 1-5'", "description": "string — human-readable label for the entry"}},
+    {"name": "remove_cron", "description": "Remove a cron entry for a script", "builtin": true, "added": "2026-01-01", "params": {"raw": "string — script filename"}},
+    {"name": "create_tool", "description": "Create a new tool by describing it in plain English", "builtin": true, "added": "2026-01-01", "params": {"description": "string — what the tool should do", "raw": "string — tool name in snake_case"}},
+    {"name": "list_tools", "description": "List all available tools", "builtin": true, "added": "2026-01-01", "params": {}},
+    {"name": "memory_set", "description": "Save a preference or fact (key: value)", "builtin": true, "added": "2026-01-01", "params": {"raw": "string — 'key: value' to store"}},
+    {"name": "memory_get", "description": "Retrieve a stored preference or fact", "builtin": true, "added": "2026-01-01", "params": {"raw": "string — key to look up"}},
+    {"name": "run_shell", "description": "Run a shell command or install a package (e.g. pip install)", "builtin": true, "added": "2026-03-11", "params": {"raw": "string — the exact shell command to run (not natural language)"}},
+    {"name": "edit_script", "description": "Edit or fix an existing script based on instructions", "builtin": true, "added": "2026-03-11", "params": {"raw": "string — script name or partial name", "description": "string — what to change or fix"}}
   ]
 }
