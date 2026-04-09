@@ -72,6 +72,8 @@ Write in British English, metric units, 24h time, ISO dates.
 - When the task is complete (or you have enough information to give a final answer), set action="finish"
   and write a clear, honest summary of what was done and what the result was.
 - If a tool repeatedly fails and you cannot make progress, set action="finish" and explain the failure.
+- When debugging a script issue, always check `script_history` first to see recent run logs.
+- When a script edit broke something and the user wants to undo, use `rollback_script`.
 - You have a budget of {MAX_STEPS} steps. Be efficient.
 
 ## Output format

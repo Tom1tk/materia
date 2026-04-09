@@ -50,6 +50,24 @@ async def init_db():
                 limit_val INTEGER,
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS script_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                script_name TEXT NOT NULL,
+                triggered_by TEXT NOT NULL,
+                exit_code INTEGER,
+                stdout TEXT,
+                stderr TEXT,
+                duration_ms INTEGER,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE TABLE IF NOT EXISTS script_versions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                script_name TEXT NOT NULL,
+                content TEXT NOT NULL,
+                action TEXT NOT NULL,
+                description TEXT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
         """)
         await db.commit()
 
@@ -190,3 +208,98 @@ async def context_log_save(system_tokens, memory_tokens, history_tokens, message
             (system_tokens, memory_tokens, history_tokens, message_tokens, total, limit_val)
         )
         await db.commit()
+
+
+# ─── Script Run History ──────────────────────────────────────────────────────
+
+async def script_run_log(
+    script_name: str,
+    triggered_by: str,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    duration_ms: int,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO script_runs (script_name, triggered_by, exit_code, stdout, stderr, duration_ms) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (script_name, triggered_by, exit_code, stdout[:4000], stderr[:2000], duration_ms)
+        )
+        await db.commit()
+
+
+async def script_run_history(script_name: str | None = None, limit: int = 10) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        if script_name:
+            async with db.execute(
+                "SELECT script_name, triggered_by, exit_code, stdout, stderr, duration_ms, timestamp "
+                "FROM script_runs WHERE script_name LIKE ? ORDER BY id DESC LIMIT ?",
+                (f"%{script_name}%", limit)
+            ) as cursor:
+                rows = await cursor.fetchall()
+        else:
+            async with db.execute(
+                "SELECT script_name, triggered_by, exit_code, stdout, stderr, duration_ms, timestamp "
+                "FROM script_runs ORDER BY id DESC LIMIT ?",
+                (limit,)
+            ) as cursor:
+                rows = await cursor.fetchall()
+    return [
+        {
+            "script_name": r[0],
+            "triggered_by": r[1],
+            "exit_code": r[2],
+            "stdout": r[3],
+            "stderr": r[4],
+            "duration_ms": r[5],
+            "timestamp": r[6],
+        }
+        for r in rows
+    ]
+
+
+# ─── Script Versioning ───────────────────────────────────────────────────────
+
+async def script_version_save(
+    script_name: str,
+    content: str,
+    action: str,
+    description: str | None = None,
+):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT INTO script_versions (script_name, content, action, description) VALUES (?, ?, ?, ?)",
+            (script_name, content, action, description)
+        )
+        await db.commit()
+
+
+async def script_version_list(script_name: str, limit: int = 10) -> list[dict]:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT id, script_name, action, description, timestamp FROM script_versions "
+            "WHERE script_name = ? ORDER BY id DESC LIMIT ?",
+            (script_name, limit)
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return [
+        {"id": r[0], "script_name": r[1], "action": r[2], "description": r[3], "timestamp": r[4]}
+        for r in rows
+    ]
+
+
+async def script_version_get(version_id: int) -> dict | None:
+    async with aiosqlite.connect(DB_PATH) as db:
+        async with db.execute(
+            "SELECT id, script_name, content, action, description, timestamp "
+            "FROM script_versions WHERE id = ?",
+            (version_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+    if not row:
+        return None
+    return {
+        "id": row[0], "script_name": row[1], "content": row[2],
+        "action": row[3], "description": row[4], "timestamp": row[5],
+    }

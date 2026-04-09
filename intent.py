@@ -100,6 +100,14 @@ Available tools:
 
 **create_script** — creating a brand new script only.
 
+**script_history** — user wants to see when a script last ran, its recent output, or whether it succeeded.
+  Trigger words: history, log, last ran, recent runs, did it run, output, ran successfully.
+  Set `raw` to the script name (or leave empty for all scripts).
+
+**rollback_script** — user wants to undo an edit, restore a previous version, or revert a script.
+  Trigger words: rollback, revert, undo, restore, previous version.
+  Set `raw` to the script name. Set `description` to the version ID if known.
+
 **chat** — mode=chat, action=chat for genuine conversation when no tool applies.
 
 Always return valid JSON with all required fields. For agentic_task, set action="agentic_task"."""

@@ -307,6 +307,9 @@ async def create_script(params: dict) -> str:
         script_path.write_text(script_code)
         os.chmod(script_path, 0o755)
 
+        # Save initial version snapshot
+        await mem.script_version_save(filename, script_code, "created", raw_result.get("description", ""))
+
         await _notify(
             f"✅ *Script written:* `{filename}`\n\n"
             f"```python\n{script_code[:1200]}{'...' if len(script_code) > 1200 else ''}\n```"
@@ -322,9 +325,12 @@ async def create_script(params: dict) -> str:
 
         if test_first:
             await _notify("🧪 *Running test...*")
-            test_result = _run_script_sync(script_path)
-            await _notify(f"🖥️ *Test output:*\n```\n{test_result[:1000]}\n```")
-            response += f"\n\nTest output:\n```\n{test_result[:500]}\n```"
+            exit_code, stdout, stderr, dur = _run_script_sync(script_path)
+            await mem.script_run_log(filename, "manual", exit_code, stdout, stderr, dur)
+            test_output = (stdout + stderr)[:1000] or "(no output)"
+            status_icon = "✅" if exit_code == 0 else f"❌ exit {exit_code}"
+            await _notify(f"🖥️ *Test output* {status_icon}:\n```\n{test_output}\n```")
+            response += f"\n\nTest output {status_icon}:\n```\n{test_output[:500]}\n```"
             if schedule:
                 response += f"\n\nReply 'yes' to schedule: `{schedule}`"
                 await mem.session_set(f"pending_cron_{filename}", schedule)
@@ -346,18 +352,21 @@ async def create_script(params: dict) -> str:
         raise
 
 
-def _run_script_sync(script_path: Path) -> str:
+def _run_script_sync(script_path: Path) -> tuple[int, str, str, int]:
+    """Run a script synchronously. Returns (exit_code, stdout, stderr, duration_ms)."""
+    import time as _time
+    t0 = _time.monotonic()
     try:
         result = subprocess.run(
             ["/opt/tgbot/venv/bin/python", str(script_path)],
-            capture_output=True, text=True, timeout=30
+            capture_output=True, text=True, timeout=60
         )
-        output = result.stdout + result.stderr
-        return output[:1000] or "(no output)"
+        duration_ms = int((_time.monotonic() - t0) * 1000)
+        return result.returncode, result.stdout, result.stderr, duration_ms
     except subprocess.TimeoutExpired:
-        return "Script timed out after 30 seconds."
+        return 1, "", "Script timed out after 60 seconds.", int((_time.monotonic() - t0) * 1000)
     except Exception as e:
-        return f"Error running script: {e}"
+        return 1, "", f"Error running script: {e}", int((_time.monotonic() - t0) * 1000)
 
 
 def _add_cron_entry(filename: str, schedule: str, description: str = "") -> str:
@@ -371,7 +380,7 @@ def _add_cron_entry(filename: str, schedule: str, description: str = "") -> str:
     try:
         result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
         existing = result.stdout if result.returncode == 0 else ""
-        cmd = f"{schedule} /opt/tgbot/venv/bin/python /opt/tgbot/scripts/{filename}"
+        cmd = f"{schedule} /opt/tgbot/venv/bin/python /opt/tgbot/cron_wrapper.py /opt/tgbot/scripts/{filename}"
         if cmd in existing:
             return "Cron entry already exists."
         comment = f"# {description}" if description else f"# {filename}"
@@ -439,7 +448,9 @@ async def list_scripts(params: dict) -> str:
         for line in crontab_text.splitlines():
             if name in line and not line.startswith("#"):
                 parts = line.split()
-                if len(parts) >= 5:
+                # cron line: min hour dom mon dow [cmd...]
+                # Entries may have 6+ tokens if using wrapper
+                if len(parts) >= 6:
                     schedules.append(_cron_to_human(" ".join(parts[:5])))
         schedule_str = ", ".join(schedules) if schedules else "no schedule"
         lines.append(f"• {name} — {schedule_str}")
@@ -462,8 +473,11 @@ async def run_script(params: dict) -> str:
     exact_name = raw if raw.endswith(".py") else raw + ".py"
     exact_path = SCRIPTS_DIR / exact_name
     if exact_path.exists():
-        output = _run_script_sync(exact_path)
-        return f"Ran `{exact_name}`:\n```\n{output}\n```"
+        exit_code, stdout, stderr, dur = _run_script_sync(exact_path)
+        await mem.script_run_log(exact_name, "manual", exit_code, stdout, stderr, dur)
+        combined = (stdout + stderr)[:1000] or "(no output)"
+        status = "✅" if exit_code == 0 else f"❌ exit {exit_code}"
+        return f"Ran `{exact_name}` {status}:\n```\n{combined}\n```"
 
     # Fuzzy match: score each script by token overlap with the user's message
     STOPWORDS = {"can", "you", "run", "the", "for", "me", "please", "a", "an",
@@ -481,8 +495,11 @@ async def run_script(params: dict) -> str:
             best_score, best_script = score, s
 
     if best_script and best_score > 0:
-        output = _run_script_sync(best_script)
-        return f"Ran `{best_script.name}`:\n```\n{output}\n```"
+        exit_code, stdout, stderr, dur = _run_script_sync(best_script)
+        await mem.script_run_log(best_script.name, "manual", exit_code, stdout, stderr, dur)
+        combined = (stdout + stderr)[:1000] or "(no output)"
+        status = "✅" if exit_code == 0 else f"❌ exit {exit_code}"
+        return f"Ran `{best_script.name}` {status}:\n```\n{combined}\n```"
 
     available = ", ".join(s.name for s in sorted(scripts))
     return f"Couldn't find a script matching '{raw}'.\nAvailable: {available}"
@@ -600,6 +617,124 @@ async def list_tools(params: dict) -> str:
         tag = "(built-in)" if t.get("builtin") else "(custom)"
         lines.append(f"• {t['name']} {tag} — {t['description']}")
     return "Available tools:\n" + "\n".join(lines)
+
+
+# ─── 10b. SCRIPT HISTORY ────────────────────────────────────────────────────
+
+async def script_history(params: dict) -> str:
+    """Show recent run history for a script (or all scripts)."""
+    name = params.get("raw", "").strip()
+    runs = await mem.script_run_history(name or None, limit=10)
+    if not runs:
+        target = f" for '{name}'" if name else ""
+        return f"No run history found{target}."
+
+    lines = [f"Script run history{' for ' + name if name else ''} (last {len(runs)}):\n"]
+    for r in runs:
+        ts = r["timestamp"][:16] if r["timestamp"] else "?"
+        status = "✅" if r["exit_code"] == 0 else f"❌ exit {r['exit_code']}"
+        dur = f"{r['duration_ms']}ms" if r["duration_ms"] is not None else "?"
+        snippet = (r["stdout"] or r["stderr"] or "")[:120].replace("\n", " ")
+        lines.append(f"[{ts}] {r['script_name']} | {r['triggered_by']} | {status} | {dur}")
+        if snippet:
+            lines.append(f"  └ {snippet}")
+    return "\n".join(lines)
+
+
+# ─── 10c. ROLLBACK SCRIPT ───────────────────────────────────────────────────
+
+async def rollback_script(params: dict) -> str:
+    """Restore a script to a previous version. Shows history if no version_id given."""
+    raw = params.get("raw", "").strip()
+    version_id_str = params.get("description", "").strip()  # reuse description param for version id
+
+    if not raw:
+        return "Please specify a script name."
+
+    # Resolve script name
+    scripts = list(SCRIPTS_DIR.glob("*.py"))
+    candidate = raw if raw.endswith(".py") else raw + ".py"
+    script_path = SCRIPTS_DIR / candidate
+    script_name = candidate
+
+    if not script_path.exists():
+        # Try fuzzy match
+        STOPWORDS = {"rollback", "revert", "restore", "the", "a", "script", "file"}
+        tokens = [t.lower() for t in raw.replace("-", " ").replace("_", " ").split()
+                  if t.lower() not in STOPWORDS]
+        best_score, best = 0, None
+        for s in scripts:
+            stem = s.stem.replace("-", " ").replace("_", " ").lower()
+            score = sum(1 for t in tokens if t in stem)
+            if score > best_score:
+                best_score, best = score, s
+        if best and best_score > 0:
+            script_path = best
+            script_name = best.name
+        else:
+            return f"Script not found: {raw}"
+
+    # If a specific version id was given, restore it
+    if version_id_str.isdigit():
+        ver = await mem.script_version_get(int(version_id_str))
+        if not ver:
+            return f"Version {version_id_str} not found."
+        if ver["script_name"] != script_name:
+            return f"Version {version_id_str} belongs to '{ver['script_name']}', not '{script_name}'."
+        # Save current as a checkpoint before rollback
+        if script_path.exists():
+            await mem.script_version_save(script_name, script_path.read_text(), "rolled_back",
+                                          f"Rolled back to version {version_id_str}")
+        script_path.write_text(ver["content"])
+        os.chmod(script_path, 0o755)
+        return (
+            f"Rolled back `{script_name}` to version {version_id_str} "
+            f"({ver['action']} at {ver['timestamp'][:16]}).\n"
+            f"Previous state saved as new version."
+        )
+
+    # No version id — show available versions
+    versions = await mem.script_version_list(script_name, limit=8)
+    if not versions:
+        return f"No version history found for '{script_name}'."
+
+    lines = [f"Version history for `{script_name}` (use `rollback_script` with description=<id>):\n"]
+    for v in versions:
+        lines.append(f"ID {v['id']} | {v['action']} | {v['timestamp'][:16]} | {v['description'] or ''}")
+    return "\n".join(lines)
+
+
+# ─── Destructive command detection ─────────────────────────────────────────
+
+import re as _re
+
+_DESTRUCTIVE_SHELL = [
+    (_re.compile(r'\brm\s'), "Delete file(s)"),
+    (_re.compile(r'\brmdir\b'), "Remove directory"),
+    (_re.compile(r'\bkill\b|\bpkill\b|\bkillall\b'), "Kill process(es)"),
+    (_re.compile(r'\bpip\s+uninstall\b'), "Uninstall package(s)"),
+    (_re.compile(r'\bapt\s+(remove|purge)\b'), "Remove system package(s)"),
+    (_re.compile(r'\bcrontab\s+-r\b'), "Remove entire crontab"),
+    (_re.compile(r'\bsystemctl\s+(stop|disable)\b'), "Stop/disable system service"),
+    (_re.compile(r'\bDROP\s+TABLE\b', _re.IGNORECASE), "Drop database table"),
+    (_re.compile(r'\bDELETE\s+FROM\b', _re.IGNORECASE), "Delete database rows"),
+    (_re.compile(r'\btruncate\b', _re.IGNORECASE), "Truncate file or table"),
+]
+
+
+def needs_confirmation(action: str, params: dict) -> str | None:
+    """Return a human-readable warning if the action is destructive, else None."""
+    if action == "remove_cron":
+        script = params.get("raw", "unknown")
+        return f"Remove cron schedule for <code>{script}</code>"
+
+    if action == "run_shell":
+        cmd = params.get("raw", "")
+        for pattern, label in _DESTRUCTIVE_SHELL:
+            if pattern.search(cmd):
+                return f"{label}: <code>{cmd[:200]}</code>"
+
+    return None
 
 
 # ─── 11. MEMORY SET ─────────────────────────────────────────────────────────
@@ -746,6 +881,12 @@ async def edit_script(params: dict) -> str:
                 await _notify("✅ *Dependencies installed.*")
             else:
                 await _notify(f"⚠️ *pip install failed:*\n```\n{pip_result.stderr[:800]}\n```")
+
+        # Save pre-edit snapshot so it can be restored
+        await mem.script_version_save(
+            script_path.name, current_code, "edited",
+            f"Before: {instructions[:200]}"
+        )
 
         script_path.write_text(new_code)
         os.chmod(script_path, 0o755)

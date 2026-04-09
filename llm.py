@@ -28,7 +28,7 @@ async def llm_structured(messages: list, schema: dict) -> dict:
                     f"{config.LLM_BASE_URL}/chat/completions",
                     json=payload,
                     headers={"Authorization": f"Bearer local"},
-                    timeout=aiohttp.ClientTimeout(total=300)
+                    timeout=aiohttp.ClientTimeout(connect=15, total=300)
                 ) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
@@ -64,7 +64,7 @@ async def llm_stream(messages: list, max_tokens: int = 512, temperature: float |
                 f"{config.LLM_BASE_URL}/chat/completions",
                 json=payload,
                 headers={"Authorization": "Bearer local"},
-                timeout=aiohttp.ClientTimeout(total=120)
+                timeout=aiohttp.ClientTimeout(connect=15, sock_read=120, total=900)
             ) as resp:
                 resp.raise_for_status()
                 async for raw_line in resp.content:
@@ -101,7 +101,7 @@ async def llm_plain(messages: list, max_tokens: int = 512, temperature: float | 
                     f"{config.LLM_BASE_URL}/chat/completions",
                     json=payload,
                     headers={"Authorization": "Bearer local"},
-                    timeout=aiohttp.ClientTimeout(total=30)
+                    timeout=aiohttp.ClientTimeout(connect=15, total=600)
                 ) as resp:
                     resp.raise_for_status()
                     data = await resp.json()
