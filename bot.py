@@ -6,11 +6,13 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+import aiohttp
 from aiogram import Bot, Dispatcher, F
 from aiogram.types import Message, BotCommand, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.filters import Command
@@ -37,8 +39,8 @@ bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
 dp = Dispatcher()
 scheduler = AsyncIOScheduler(timezone=config.TIMEZONE)
 
-# Tracks the active handler task per chat so /cancel can kill it
-_active_tasks: dict[int, asyncio.Task] = {}
+# Tracks active handler tasks per chat so /cancel can kill all of them
+_active_tasks: dict[int, set[asyncio.Task]] = {}
 
 # Pending destructive-action confirmations keyed by chat_id
 _pending_confirms: dict[int, dict] = {}
@@ -77,9 +79,12 @@ async def refresh_commands():
 
 
 def truncate(text: str, limit: int = 4096) -> str:
-    if len(text) <= limit:
+    encoded = text.encode("utf-8")
+    if len(encoded) <= limit:
         return text
-    return text[:limit - 15] + "... (truncated)"
+    # Slice on byte boundary, then decode safely
+    sliced = encoded[:limit - 15].decode("utf-8", errors="ignore")
+    return sliced + "... (truncated)"
 
 
 def _md_to_tg(text: str) -> str:
@@ -91,9 +96,21 @@ def _md_to_tg(text: str) -> str:
     return text
 
 
+async def _answer_safe(message: Message, text: str, parse_mode: str | None = None, **kwargs):
+    """Send a message, falling back to plain text if the parse_mode causes a parse error."""
+    from aiogram.exceptions import TelegramBadRequest
+    if parse_mode:
+        try:
+            await message.answer(text, parse_mode=parse_mode, **kwargs)
+            return
+        except TelegramBadRequest:
+            pass
+    await message.answer(text, **kwargs)
+
+
 @dp.message(Command("start", "help"))
 async def cmd_help(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
     with open("/opt/materia/manifest.json") as f:
         data = json.load(f)
@@ -120,7 +137,7 @@ async def cmd_help(message: Message):
 
 @dp.message(Command("context"))
 async def cmd_context(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
     history = await mem.conversation_get_all()
     memory_data = await mem.memory_get_all()
@@ -140,7 +157,7 @@ async def cmd_context(message: Message):
 
 @dp.message(Command("compact"))
 async def cmd_compact(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
     await message.answer("Compacting context...")
     await ctx.compact()
@@ -149,7 +166,7 @@ async def cmd_compact(message: Message):
 
 @dp.message(Command("tools"))
 async def cmd_tools(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
     from tools.builtin import list_tools
     result = await list_tools({})
@@ -158,7 +175,7 @@ async def cmd_tools(message: Message):
 
 @dp.message(Command("scripts"))
 async def cmd_scripts(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
     from tools.builtin import list_scripts
     result = await list_scripts({})
@@ -167,11 +184,13 @@ async def cmd_scripts(message: Message):
 
 @dp.message(Command("cancel"))
 async def cmd_cancel(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
-    task = _active_tasks.get(message.chat.id)
-    if task and not task.done():
-        task.cancel()
+    tasks = _active_tasks.pop(message.chat.id, set())
+    active = [t for t in tasks if not t.done()]
+    if active:
+        for t in active:
+            t.cancel()
         await message.answer("⛔ Cancelled.")
     else:
         await message.answer("Nothing to cancel.")
@@ -179,7 +198,7 @@ async def cmd_cancel(message: Message):
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
 
     lines = [f"<b>Materia Status</b>"]
@@ -190,11 +209,11 @@ async def cmd_status(message: Message):
     # LLM connectivity
     try:
         t0 = time.monotonic()
-        async with __import__("aiohttp").ClientSession() as s:
+        async with aiohttp.ClientSession() as s:
             async with s.get(
                 f"{config.LLM_BASE_URL}/models",
                 headers={"Authorization": "Bearer local"},
-                timeout=__import__("aiohttp").ClientTimeout(total=5)
+                timeout=aiohttp.ClientTimeout(total=5)
             ) as r:
                 await r.json()
         latency = int((time.monotonic() - t0) * 1000)
@@ -230,7 +249,7 @@ async def cmd_status(message: Message):
 
 @dp.message(Command("memory"))
 async def cmd_memory(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
     data = await mem.memory_get_all()
     if not data:
@@ -244,7 +263,7 @@ async def cmd_memory(message: Message):
 
 @dp.message(Command("reset"))
 async def cmd_reset(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
     await mem.conversation_clear(keep_last=0)
     await message.answer("History cleared.")
@@ -283,7 +302,11 @@ async def handle_confirm_callback(callback: CallbackQuery):
     try:
         result = await route(intent, user_text)
         parse_mode = "Markdown" if _is_markdown(action) else None
-        await callback.message.reply(truncate(result), parse_mode=parse_mode)
+        from aiogram.exceptions import TelegramBadRequest
+        try:
+            await callback.message.reply(truncate(result), parse_mode=parse_mode)
+        except TelegramBadRequest:
+            await callback.message.reply(truncate(result))
         await mem.conversation_add("assistant", result)
     except Exception as e:
         logger.error(f"Confirmed action failed: {e}", exc_info=True)
@@ -295,7 +318,10 @@ async def _keep_typing(chat_id: int):
     expires after ~5s so we refresh it to cover long intent + generation time."""
     try:
         while True:
-            await bot.send_chat_action(chat_id, "typing")
+            try:
+                await bot.send_chat_action(chat_id, "typing")
+            except Exception as e:
+                logger.debug(f"_keep_typing send_chat_action failed: {e}")
             await asyncio.sleep(4)
     except asyncio.CancelledError:
         pass
@@ -308,13 +334,13 @@ async def _stream_chat(message: Message, params: dict) -> str:
 
     sent = await message.answer("▌")
     accumulated = ""
-    last_edit = 0  # Zero forces an edit on the very first token
+    last_edit = float("-inf")
     MIN_EDIT_INTERVAL = 0.5  # seconds — safe within Telegram rate limits
 
     try:
         async for chunk in llm.llm_stream(messages, max_tokens=config.LLM_MAX_TOKENS, temperature=0.3):
             accumulated += chunk
-            now = asyncio.get_event_loop().time()
+            now = asyncio.get_running_loop().time()
             if now - last_edit >= MIN_EDIT_INTERVAL:
                 try:
                     await sent.edit_text(truncate(accumulated + "▌"))
@@ -342,7 +368,7 @@ async def _process_text(message: Message, user_text: str):
     _last_notify: list[float] = [0.0]
 
     async def _notify(text: str):
-        gap = asyncio.get_event_loop().time() - _last_notify[0]
+        gap = asyncio.get_running_loop().time() - _last_notify[0]
         if gap < 1.5:
             await asyncio.sleep(1.5 - gap)
         try:
@@ -352,13 +378,13 @@ async def _process_text(message: Message, user_text: str):
                 await message.answer(truncate(text))
             except Exception as e:
                 logger.warning(f"notify send failed: {e}")
-        _last_notify[0] = asyncio.get_event_loop().time()
+        _last_notify[0] = asyncio.get_running_loop().time()
 
     try:
         user_conv_id = await mem.conversation_add("user", user_text)
         await ctx.check_and_compact()
 
-        intent = await classify_intent(user_text)
+        intent = await classify_intent(user_text, before_id=user_conv_id)
         mode = intent.get("mode", "chat")
         action = intent.get("action", "chat")
         params = intent.get("params", {})
@@ -374,6 +400,7 @@ async def _process_text(message: Message, user_text: str):
         )
 
         if mode == "chat":
+            params["_before_id"] = user_conv_id
             result = await _stream_chat(message, params)
         elif mode == "agentic_task":
             result = await agent.run_agent_loop(
@@ -381,10 +408,7 @@ async def _process_text(message: Message, user_text: str):
                 notify=_notify,
                 conversation_id=user_conv_id,
             )
-            try:
-                await message.answer(truncate(_md_to_tg(result)), parse_mode="Markdown")
-            except Exception:
-                await message.answer(truncate(result))
+            await _answer_safe(message, truncate(_md_to_tg(result)), parse_mode="Markdown")
         else:
             # simple_tool path — check for destructive actions first
             from tools.builtin import needs_confirmation
@@ -407,14 +431,13 @@ async def _process_text(message: Message, user_text: str):
                 )
                 return
 
-            _builtin_notify = {"create_script", "create_tool", "edit_script"}
             _spec = registry.get(action)
-            if action in _builtin_notify or (_spec and _spec.streams_progress):
+            if action in _BUILTIN_NOTIFY or (_spec and _spec.streams_progress):
                 params["notify"] = _notify
 
             result = await route(intent, user_text)
             parse_mode = "Markdown" if _is_markdown(action) else None
-            await message.answer(truncate(result), parse_mode=parse_mode)
+            await _answer_safe(message, truncate(result), parse_mode=parse_mode)
             if action == "create_tool" or (_spec and _spec.refresh_commands_after):
                 await refresh_commands()
 
@@ -432,6 +455,7 @@ _SLASH_META = {
 }
 
 _BUILTIN_MARKDOWN = {"hn_briefing", "create_script", "edit_script"}
+_BUILTIN_NOTIFY = {"create_script", "create_tool", "edit_script"}
 
 
 def _is_markdown(action: str) -> bool:
@@ -447,7 +471,7 @@ async def _run_slash_tool(message: Message, action: str, params: dict, user_text
     _last_notify: list[float] = [0.0]
 
     async def _notify(text: str):
-        gap = asyncio.get_event_loop().time() - _last_notify[0]
+        gap = asyncio.get_running_loop().time() - _last_notify[0]
         if gap < 1.5:
             await asyncio.sleep(1.5 - gap)
         try:
@@ -457,7 +481,7 @@ async def _run_slash_tool(message: Message, action: str, params: dict, user_text
                 await message.answer(truncate(text))
             except Exception as e:
                 logger.warning(f"slash notify failed: {e}")
-        _last_notify[0] = asyncio.get_event_loop().time()
+        _last_notify[0] = asyncio.get_running_loop().time()
 
     intent = {"action": action, "params": params, "mode": "simple_tool"}
 
@@ -480,19 +504,13 @@ async def _run_slash_tool(message: Message, action: str, params: dict, user_text
             await message.answer(f"⚠️ <b>Confirm:</b> {warning}", parse_mode="HTML", reply_markup=kb)
             return
 
-        _builtin_notify = {"create_script", "create_tool", "edit_script"}
         _spec = registry.get(action)
-        if action in _builtin_notify or (_spec and _spec.streams_progress):
+        if action in _BUILTIN_NOTIFY or (_spec and _spec.streams_progress):
             params["notify"] = _notify
 
         result = await route(intent, user_text)
-        if _is_markdown(action):
-            try:
-                await message.answer(truncate(result), parse_mode="Markdown")
-            except Exception:
-                await message.answer(truncate(result))
-        else:
-            await message.answer(truncate(result))
+        parse_mode = "Markdown" if _is_markdown(action) else None
+        await _answer_safe(message, truncate(result), parse_mode=parse_mode)
 
         await mem.conversation_add("assistant", result)
 
@@ -507,7 +525,7 @@ async def _run_slash_tool(message: Message, action: str, params: dict, user_text
 
 @dp.message(F.text.startswith("/"))
 async def handle_slash_tool(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
 
     text = message.text or ""
@@ -528,7 +546,7 @@ async def handle_slash_tool(message: Message):
 
     params = {"raw": args} if args else {}
     task = asyncio.create_task(_run_slash_tool(message, cmd, params, text))
-    _active_tasks[message.chat.id] = task
+    _active_tasks.setdefault(message.chat.id, set()).add(task)
     try:
         await task
     except asyncio.CancelledError:
@@ -536,16 +554,16 @@ async def handle_slash_tool(message: Message):
     except Exception as e:
         logger.error(f"handle_slash_tool error: {e}", exc_info=True)
     finally:
-        _active_tasks.pop(message.chat.id, None)
+        _active_tasks.get(message.chat.id, set()).discard(task)
 
 
 @dp.message(F.text)
 async def handle_message(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
 
     task = asyncio.create_task(_process_text(message, message.text or ""))
-    _active_tasks[message.chat.id] = task
+    _active_tasks.setdefault(message.chat.id, set()).add(task)
     try:
         await task
     except asyncio.CancelledError:
@@ -553,20 +571,21 @@ async def handle_message(message: Message):
     except Exception as e:
         logger.error(f"handle_message error: {e}", exc_info=True)
     finally:
-        _active_tasks.pop(message.chat.id, None)
+        _active_tasks.get(message.chat.id, set()).discard(task)
 
 
 @dp.message(F.voice)
 async def handle_voice(message: Message):
-    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+    if not message.from_user or message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
 
     async def _handle_voice():
         typing_task = asyncio.create_task(_keep_typing(message.chat.id))
         try:
-            # Download the OGG voice file
+            # Download the OGG voice file to a unique temp path
             file_info = await bot.get_file(message.voice.file_id)
-            file_path = f"/tmp/voice_{message.message_id}.ogg"
+            with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as tmp:
+                file_path = tmp.name
             await bot.download_file(file_info.file_path, file_path)
 
             # Transcribe
@@ -588,7 +607,7 @@ async def handle_voice(message: Message):
 
         # Process the transcribed text as if it were a normal message
         task = asyncio.create_task(_process_text(message, text))
-        _active_tasks[message.chat.id] = task
+        _active_tasks.setdefault(message.chat.id, set()).add(task)
         try:
             await task
         except asyncio.CancelledError:
@@ -596,7 +615,7 @@ async def handle_voice(message: Message):
         except Exception as e:
             logger.error(f"Voice pipeline error: {e}", exc_info=True)
         finally:
-            _active_tasks.pop(message.chat.id, None)
+            _active_tasks.get(message.chat.id, set()).discard(task)
 
     await _handle_voice()
 

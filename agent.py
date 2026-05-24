@@ -19,8 +19,8 @@ from tools.result import ToolResult
 
 logger = logging.getLogger(__name__)
 
-MAX_STEPS = getattr(config, "AGENT_MAX_STEPS", 6)
-MAX_SECONDS = getattr(config, "AGENT_MAX_SECONDS", 600)
+MAX_STEPS = config.AGENT_MAX_STEPS
+MAX_SECONDS = config.AGENT_MAX_SECONDS
 
 # JSON schema for each agent step
 STEP_SCHEMA = {
@@ -192,8 +192,8 @@ async def run_agent_loop(
 
     system_prompt = _build_agent_system_prompt(manifest_text, scripts_list)
 
-    # Load recent history for context
-    recent = await mem.conversation_get(limit=4)
+    # Load recent history for context, excluding the current user turn (already appended explicitly).
+    recent = await mem.conversation_get(limit=4, before_id=conversation_id)
     history_msgs = [{"role": m["role"], "content": m["content"]} for m in recent
                     if m["role"] in ("user", "assistant")]
 
@@ -234,10 +234,10 @@ async def run_agent_loop(
 
         # Notify user with step milestone
         detail = ""
-        if getattr(config, "AGENT_VERBOSE_STEPS", True) and tool_params:
+        if config.AGENT_VERBOSE_STEPS and tool_params:
             raw_val = str(tool_params.get("raw", "")).replace("\n", " ").strip()
             if raw_val:
-                truncated = raw_val[:80] + ("…" if len(raw_val) > 80 else "")
+                truncated = raw_val[:200] + ("…" if len(raw_val) > 200 else "")
                 detail = f"\n```\n{truncated}\n```"
         await notify(f"⚙️ Step {step_n} · `{tool_name}`{detail}")
 

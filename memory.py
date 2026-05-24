@@ -2,7 +2,7 @@ import aiosqlite
 import json
 import logging
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -11,6 +11,8 @@ DB_PATH = "/opt/materia/data/memory.db"
 async def init_db():
     Path("/opt/materia/data").mkdir(exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA busy_timeout=5000")
         await db.executescript("""
             CREATE TABLE IF NOT EXISTS memory (
                 key TEXT PRIMARY KEY,
@@ -70,12 +72,33 @@ async def init_db():
             );
         """)
         await db.commit()
+    await db_janitor()
+
+
+async def db_janitor(days: int = 90):
+    """Prune high-growth tables at startup. Keeps rows younger than `days` days.
+    For script_versions, keeps the 10 most recent per script regardless of age."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM conversations WHERE timestamp < datetime('now', ? || ' days')", (f"-{days}",))
+        await db.execute("DELETE FROM tool_calls WHERE timestamp < datetime('now', ? || ' days')", (f"-{days}",))
+        await db.execute("DELETE FROM script_runs WHERE timestamp < datetime('now', ? || ' days')", (f"-{days}",))
+        await db.execute("DELETE FROM context_log WHERE timestamp < datetime('now', ? || ' days')", (f"-{days}",))
+        # Keep at most 10 versions per script (by most recent id)
+        await db.execute("""
+            DELETE FROM script_versions WHERE id NOT IN (
+                SELECT id FROM script_versions sv
+                WHERE sv.script_name = script_versions.script_name
+                ORDER BY id DESC LIMIT 10
+            )
+        """)
+        await db.commit()
+
 
 async def memory_set(key: str, value: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
             "INSERT OR REPLACE INTO memory (key, value, updated_at) VALUES (?, ?, ?)",
-            (key, value, datetime.utcnow().isoformat())
+            (key, value, datetime.now(timezone.utc).isoformat())
         )
         await db.commit()
 
@@ -119,13 +142,24 @@ async def conversation_add_tool_call(
         )
         await db.commit()
 
-async def conversation_get(limit: int = 8, include_tools: bool = False) -> list[dict]:
+async def conversation_get(
+    limit: int = 8,
+    include_tools: bool = False,
+    before_id: int | None = None,
+) -> list[dict]:
     async with aiosqlite.connect(DB_PATH) as db:
-        async with db.execute(
-            "SELECT id, role, content FROM conversations ORDER BY id DESC LIMIT ?",
-            (limit,)
-        ) as cursor:
-            rows = await cursor.fetchall()
+        if before_id is not None:
+            async with db.execute(
+                "SELECT id, role, content FROM conversations WHERE id < ? ORDER BY id DESC LIMIT ?",
+                (before_id, limit)
+            ) as cursor:
+                rows = await cursor.fetchall()
+        else:
+            async with db.execute(
+                "SELECT id, role, content FROM conversations ORDER BY id DESC LIMIT ?",
+                (limit,)
+            ) as cursor:
+                rows = await cursor.fetchall()
         turns = [{"id": r[0], "role": r[1], "content": r[2]} for r in reversed(rows)]
 
         if not include_tools:

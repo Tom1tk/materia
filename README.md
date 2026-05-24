@@ -58,10 +58,10 @@ This is enforced by a `ToolSpec` + registry architecture. Each plugin file calls
 ├── tools/
 │   ├── spec.py         # ToolSpec dataclass — the contract for drop-in tools
 │   ├── registry.py     # Tool registry: register(), get(), all_tools(), discover()
-│   ├── builtin.py      # All 16 built-in tools
+│   ├── builtin.py      # All 17 built-in tools
 │   ├── user_tools.py   # Hot-reloaded LLM-created tools (via create_tool)
 │   └── <name>.py       # Drop-in tool files (auto-discovered on startup)
-├── manifest.json       # Registry for the 16 built-in tools
+├── manifest.json       # Registry for the 17 built-in tools
 ├── scripts/            # User-generated Python scripts (drop-in; auto-discovered)
 ├── data/               # SQLite database (git-ignored)
 ├── .env                # Secrets (git-ignored)
@@ -104,15 +104,15 @@ Copy `.env.example` to `.env` and fill in the values:
 | `TELEGRAM_ALLOWED_USERS` | Comma-separated Telegram user IDs | required |
 | `LLM_BASE_URL` | OpenAI-compatible LLM base URL | `http://localhost:8080/v1` |
 | `LLM_MODEL` | Model name (llama-server ignores this) | `local` |
-| `LLM_MAX_TOKENS` | Max tokens per LLM response | `10240` |
+| `LLM_MAX_TOKENS` | Max tokens per LLM response | `512` |
 | `LLM_TEMPERATURE` | LLM sampling temperature | `0.7` |
 | `SEARXNG_URL` | SearXNG instance URL (optional) | `` |
 | `TIMEZONE` | Scheduler timezone | `Europe/London` |
-| `CONTEXT_LIMIT` | Token budget for context window | `131072` |
+| `CONTEXT_LIMIT` | Token budget for context window | `10240` |
 | `COMPACTION_THRESHOLD` | Fraction at which compaction triggers | `0.65` |
 | `WARN_THRESHOLD` | Fraction at which a warning is issued | `0.50` |
 | `HISTORY_WINDOW` | Number of conversation turns to include | `8` |
-| `AGENT_MAX_STEPS` | Maximum tool-call steps per agentic task | `100` |
+| `AGENT_MAX_STEPS` | Maximum tool-call steps per agentic task | `6` |
 | `AGENT_VERBOSE_STEPS` | Show the command run in each step notification | `true` |
 
 ---

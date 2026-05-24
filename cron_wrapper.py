@@ -63,10 +63,25 @@ async def main():
         sys.exit(1)
 
     t0 = time.monotonic()
+    script_env = {
+        **os.environ,
+        "PATH": "/opt/materia/venv/bin:/usr/local/bin:/usr/bin:/bin",
+        "PYTHONIOENCODING": "utf-8",
+        "LANG": "C.UTF-8",
+        "LC_ALL": "C.UTF-8",
+    }
+    prlimit = "/usr/bin/prlimit"
+    sandbox_as = str(512 * 1024 * 1024)
+    if os.path.exists(prlimit):
+        run_cmd = [prlimit, f"--as={sandbox_as}", "--cpu=295", "--",
+                   "/opt/materia/venv/bin/python", str(script_path)]
+    else:
+        run_cmd = ["/opt/materia/venv/bin/python", str(script_path)]
     try:
         result = subprocess.run(
-            ["/opt/materia/venv/bin/python", str(script_path)],
+            run_cmd,
             capture_output=True, text=True, timeout=300,
+            env=script_env,
         )
         exit_code = result.returncode
         stdout = result.stdout

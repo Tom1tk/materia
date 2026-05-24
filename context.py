@@ -7,6 +7,7 @@ import memory as mem
 
 logger = logging.getLogger(__name__)
 MEMORY_MD_PATH = "/opt/materia/MEMORY.md"
+MEMORY_MD_MAX_BYTES = 200_000
 
 def count_tokens(text: str) -> int:
     return len(text) // 4
@@ -51,8 +52,12 @@ class ContextUsage:
 async def check_and_compact(force: bool = False) -> bool:
     """Check if compaction is needed and run it if so. Returns True if compaction ran."""
     history = await mem.conversation_get_all()
+    memory_data = await mem.memory_get_all()
     history_tokens = count_messages_tokens(history)
-    if force or (history_tokens / config.CONTEXT_LIMIT >= config.COMPACTION_THRESHOLD):
+    memory_tokens = count_tokens(str(memory_data))
+    system_tokens = 300
+    total = system_tokens + memory_tokens + history_tokens
+    if force or (total / config.CONTEXT_LIMIT >= config.COMPACTION_THRESHOLD):
         await compact(history)
         return True
     return False
@@ -86,20 +91,17 @@ async def compact(history: list[dict] = None):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     section = f"\n## {timestamp}\n{summary}\n"
 
-    # Append to MEMORY.md
+    # Append to MEMORY.md, then trim from the head if it exceeds the size cap
     md_path = Path(MEMORY_MD_PATH)
     if not md_path.exists():
         md_path.write_text("# Bot Memory\n")
     with open(md_path, "a") as f:
         f.write(section)
-
-    # Extract key facts into SQLite memory table
-    # Prefix keys with compacted_ so they can be distinguished from user-set facts
-    lines = [l.strip("- •").strip() for l in summary.splitlines() if l.strip().startswith(("-", "•"))]
-    for i, line in enumerate(lines[:10]):
-        if ":" in line:
-            key, val = line.split(":", 1)
-            await mem.memory_set("compacted_" + key.strip().lower().replace(" ", "_"), val.strip())
+    if md_path.stat().st_size > MEMORY_MD_MAX_BYTES:
+        body = md_path.read_text()
+        cut = body.find("\n## ", len(body) - MEMORY_MD_MAX_BYTES)
+        if cut > 0:
+            md_path.write_text("# Bot Memory\n" + body[cut + 1:])
 
     # Clear history, keep last 2
     await mem.conversation_clear(keep_last=2)

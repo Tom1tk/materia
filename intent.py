@@ -45,7 +45,7 @@ async def get_manifest_text() -> str:
         lines.append(f"- {spec.name}: {spec.description}")
     return "\n".join(lines)
 
-async def classify_intent(user_message: str) -> dict:
+async def classify_intent(user_message: str, before_id: int | None = None) -> dict:
     """Classify user message into a structured intent."""
     manifest_text = await get_manifest_text()
     memory_data = await mem.memory_get_all()
@@ -55,8 +55,8 @@ async def classify_intent(user_message: str) -> dict:
         items = list(memory_data.items())[:20]
         memory_text = "\nUser preferences and context:\n" + "\n".join(f"- {k}: {v}" for k, v in items)
 
-    # Last 2 messages for context
-    recent = await mem.conversation_get(limit=2)
+    # Last 2 messages for context — exclude the current user turn (before_id) to avoid duplication
+    recent = await mem.conversation_get(limit=2, before_id=before_id)
     recent_text = ""
     if recent:
         recent_text = "\nRecent conversation:\n" + "\n".join(f"{m['role'].upper()}: {m['content']}" for m in recent)
