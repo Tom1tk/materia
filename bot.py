@@ -203,10 +203,7 @@ async def cmd_status(message: Message):
 
     lines = [f"<b>Materia Status</b>"]
 
-    # Model
-    lines.append(f"\n<b>Model:</b> <code>{html.escape(config.LLM_MODEL)}</code>")
-
-    # LLM connectivity
+    # LLM connectivity + dynamic model name
     try:
         t0 = time.monotonic()
         async with aiohttp.ClientSession() as s:
@@ -215,10 +212,16 @@ async def cmd_status(message: Message):
                 headers={"Authorization": "Bearer local"},
                 timeout=aiohttp.ClientTimeout(total=5)
             ) as r:
-                await r.json()
+                data = await r.json()
         latency = int((time.monotonic() - t0) * 1000)
+        try:
+            model_id = data["data"][0]["id"]
+        except (KeyError, IndexError, TypeError):
+            model_id = config.LLM_MODEL
+        lines.append(f"\n<b>Model:</b> <code>{html.escape(model_id)}</code>")
         lines.append(f"<b>LLM:</b> ✅ reachable ({latency}ms)")
     except Exception as e:
+        lines.append(f"\n<b>Model:</b> <code>{html.escape(config.LLM_MODEL)}</code>")
         lines.append(f"<b>LLM:</b> ❌ unreachable — {html.escape(str(e)[:80])}")
 
     # Context
