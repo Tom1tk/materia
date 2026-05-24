@@ -734,6 +734,9 @@ def needs_confirmation(action: str, params: dict) -> str | None:
         script = params.get("raw", "unknown")
         return f"Remove cron schedule for <code>{script}</code>"
 
+    if action == "restart_bot":
+        return "Restart the bot service? The connection will drop briefly."
+
     if action == "run_shell":
         cmd = params.get("raw", "")
         for pattern, label in _DESTRUCTIVE_SHELL:
@@ -922,3 +925,15 @@ async def edit_script(params: dict) -> str:
             f"```\n{tb[-1500:]}\n```"
         )
         raise
+
+
+# ─── 17. RESTART BOT ────────────────────────────────────────────────────────
+
+async def restart_bot(params: dict) -> str:
+    # Fork a delayed restart so this response is delivered before the process dies
+    subprocess.Popen(
+        ["bash", "-c", "sleep 2 && sudo systemctl restart tgbot"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return "Restarting in 2 seconds…"

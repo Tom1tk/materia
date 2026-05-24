@@ -4,7 +4,7 @@ from tools.builtin import (
     chat, web_search, hn_briefing, create_script, list_scripts,
     run_script, add_cron, remove_cron, create_tool, list_tools,
     memory_set_tool, memory_get_tool, run_shell, edit_script,
-    script_history, rollback_script,
+    script_history, rollback_script, restart_bot,
 )
 from tools import registry
 
@@ -27,6 +27,7 @@ TOOL_MAP = {
     "edit_script": edit_script,
     "script_history": script_history,
     "rollback_script": rollback_script,
+    "restart_bot": restart_bot,
 }
 async def route(intent: dict, user_message: str) -> str:
     action = intent.get("action", "chat")

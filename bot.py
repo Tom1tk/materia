@@ -613,6 +613,12 @@ async def main():
     await refresh_commands()
     logger.info("[Materia] Bot commands registered.")
 
+    for uid in config.TELEGRAM_ALLOWED_USERS:
+        try:
+            await bot.send_message(uid, "✅ Bot is online.")
+        except Exception as e:
+            logger.warning(f"[Materia] Startup notify failed for {uid}: {e}")
+
     scheduler.start()
     logger.info("[Materia] Scheduler started.")
 
