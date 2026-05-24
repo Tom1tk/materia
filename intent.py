@@ -35,7 +35,7 @@ INTENT_SCHEMA = {
 async def get_manifest_text() -> str:
     lines = []
     try:
-        with open("/opt/tgbot/manifest.json") as f:
+        with open("/opt/materia/manifest.json") as f:
             data = json.load(f)
         for t in data["tools"]:
             lines.append(f"- {t['name']}: {t['description']}")
@@ -100,7 +100,7 @@ Available tools:
   Set `raw` to the ACTUAL shell command (not the user's words).
   Examples: "install netifaces" → raw: "pip install netifaces"
             "check disk space" → raw: "df -h"
-            "delete foo.py" → raw: "rm /opt/tgbot/scripts/foo.py"
+            "delete foo.py" → raw: "rm /opt/materia/scripts/foo.py"
 
 **run_script** — user wants to execute an existing script. Set `raw` to script name.
 

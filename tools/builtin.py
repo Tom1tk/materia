@@ -18,8 +18,8 @@ import sys
 
 logger = logging.getLogger(__name__)
 
-SCRIPTS_DIR = Path("/opt/tgbot/scripts")
-MANIFEST_PATH = Path("/opt/tgbot/manifest.json")
+SCRIPTS_DIR = Path("/opt/materia/scripts")
+MANIFEST_PATH = Path("/opt/materia/manifest.json")
 
 
 # ─── 1. CHAT ────────────────────────────────────────────────────────────────
@@ -295,7 +295,7 @@ async def create_script(params: dict) -> str:
         if deps:
             await _notify(f"📦 *Installing dependencies:* `{', '.join(deps)}`")
             pip_result = subprocess.run(
-                ["/opt/tgbot/venv/bin/pip", "install", *deps],
+                ["/opt/materia/venv/bin/pip", "install", *deps],
                 capture_output=True, text=True, timeout=120
             )
             if pip_result.returncode == 0:
@@ -361,7 +361,7 @@ def _run_script_sync(script_path: Path) -> tuple[int, str, str, int]:
     t0 = _time.monotonic()
     try:
         result = subprocess.run(
-            ["/opt/tgbot/venv/bin/python", str(script_path)],
+            ["/opt/materia/venv/bin/python", str(script_path)],
             capture_output=True, text=True, timeout=60
         )
         duration_ms = int((_time.monotonic() - t0) * 1000)
@@ -383,7 +383,7 @@ def _add_cron_entry(filename: str, schedule: str, description: str = "") -> str:
     try:
         result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
         existing = result.stdout if result.returncode == 0 else ""
-        cmd = f"{schedule} /opt/tgbot/venv/bin/python /opt/tgbot/cron_wrapper.py /opt/tgbot/scripts/{filename}"
+        cmd = f"{schedule} /opt/materia/venv/bin/python /opt/materia/cron_wrapper.py /opt/materia/scripts/{filename}"
         if cmd in existing:
             return "Cron entry already exists."
         comment = f"# {description}" if description else f"# {filename}"
@@ -435,7 +435,7 @@ async def list_scripts(params: dict) -> str:
     SCRIPTS_DIR.mkdir(exist_ok=True)
     scripts = list(SCRIPTS_DIR.glob("*.py"))
     if not scripts:
-        return "No scripts found in /opt/tgbot/scripts/"
+        return "No scripts found in /opt/materia/scripts/"
 
     # Read crontab
     try:
@@ -470,7 +470,7 @@ async def run_script(params: dict) -> str:
 
     scripts = list(SCRIPTS_DIR.glob("*.py"))
     if not scripts:
-        return "No scripts found in /opt/tgbot/scripts/"
+        return "No scripts found in /opt/materia/scripts/"
 
     # Try exact match first
     exact_name = raw if raw.endswith(".py") else raw + ".py"
@@ -587,7 +587,7 @@ It should return a string result. Import any modules inside the function body.""
     sched = result.get("schedule") or schedule
 
     # Append to user_tools.py
-    user_tools_path = Path("/opt/tgbot/tools/user_tools.py")
+    user_tools_path = Path("/opt/materia/tools/user_tools.py")
     with open(user_tools_path, "a") as f:
         f.write(f"\n\n{fn_code}\n")
 
@@ -781,7 +781,7 @@ async def run_shell(params: dict) -> str:
     try:
         result = subprocess.run(
             cmd, shell=True, capture_output=True, text=True, timeout=60,
-            env={**os.environ, "PATH": "/opt/tgbot/venv/bin:/usr/local/bin:/usr/bin:/bin"}
+            env={**os.environ, "PATH": "/opt/materia/venv/bin:/usr/local/bin:/usr/bin:/bin"}
         )
         output = (result.stdout + result.stderr).strip()
         status = f"(exit {result.returncode})" if result.returncode != 0 else "(ok)"
@@ -821,7 +821,7 @@ async def edit_script(params: dict) -> str:
     # Resolve script name with same fuzzy logic as run_script
     scripts = list(SCRIPTS_DIR.glob("*.py"))
     if not scripts:
-        return "No scripts found in /opt/tgbot/scripts/"
+        return "No scripts found in /opt/materia/scripts/"
 
     STOPWORDS = {"can", "you", "fix", "edit", "update", "modify", "change", "the",
                  "a", "an", "my", "this", "that", "script", "file", "please", "it"}
@@ -888,7 +888,7 @@ async def edit_script(params: dict) -> str:
         if deps:
             await _notify(f"📦 *Installing dependencies:* `{', '.join(deps)}`")
             pip_result = subprocess.run(
-                ["/opt/tgbot/venv/bin/pip", "install", *deps],
+                ["/opt/materia/venv/bin/pip", "install", *deps],
                 capture_output=True, text=True, timeout=120
             )
             if pip_result.returncode == 0:
@@ -932,7 +932,7 @@ async def edit_script(params: dict) -> str:
 async def restart_bot(params: dict) -> str:
     # Fork a delayed restart so this response is delivered before the process dies
     subprocess.Popen(
-        ["bash", "-c", "sleep 2 && sudo systemctl restart tgbot"],
+        ["bash", "-c", "sleep 2 && sudo systemctl restart materia"],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )

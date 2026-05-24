@@ -6,10 +6,10 @@ from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-DB_PATH = "/opt/tgbot/data/memory.db"
+DB_PATH = "/opt/materia/data/memory.db"
 
 async def init_db():
-    Path("/opt/tgbot/data").mkdir(exist_ok=True)
+    Path("/opt/materia/data").mkdir(exist_ok=True)
     async with aiosqlite.connect(DB_PATH) as db:
         await db.executescript("""
             CREATE TABLE IF NOT EXISTS memory (

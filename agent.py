@@ -94,7 +94,7 @@ register(ToolSpec(
 
 Use the plugin path when the tool needs: intent routing hints, confirmation prompts,
 Markdown output, or when it should persist cleanly as a standalone file.
-After writing the file, tell the user to run `sudo systemctl restart tgbot`.
+After writing the file, tell the user to run `sudo systemctl restart materia`.
 
 ## Agent rules (mandatory)
 - You have REAL tool access. Use tools to verify before claiming results.
@@ -166,7 +166,7 @@ async def run_agent_loop(
     # Build manifest text with param hints — builtins from manifest.json, plugins from registry
     from tools import registry as _registry
     try:
-        with open("/opt/tgbot/manifest.json") as f:
+        with open("/opt/materia/manifest.json") as f:
             _manifest = json.load(f)
         lines = []
         for t in _manifest["tools"]:
@@ -186,7 +186,7 @@ async def run_agent_loop(
         manifest_text = "unavailable"
 
     from pathlib import Path
-    scripts_dir = Path("/opt/tgbot/scripts")
+    scripts_dir = Path("/opt/materia/scripts")
     scripts = sorted(p.name for p in scripts_dir.glob("*.py")) if scripts_dir.exists() else []
     scripts_list = ", ".join(scripts) if scripts else "none"
 

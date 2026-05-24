@@ -6,7 +6,7 @@ import config
 import memory as mem
 
 logger = logging.getLogger(__name__)
-MEMORY_MD_PATH = "/opt/tgbot/MEMORY.md"
+MEMORY_MD_PATH = "/opt/materia/MEMORY.md"
 
 def count_tokens(text: str) -> int:
     return len(text) // 4

@@ -44,7 +44,7 @@ This is enforced by a `ToolSpec` + registry architecture. Each plugin file calls
 ## Directory Structure
 
 ```
-/opt/tgbot/
+/opt/materia/
 ├── bot.py              # Entry point, Telegram dispatcher, voice handling, confirmation UI
 ├── agent.py            # ReAct agentic loop
 ├── intent.py           # LLM-based intent classifier
@@ -74,8 +74,8 @@ This is enforced by a `ToolSpec` + registry architecture. Each plugin file calls
 ## Installation
 
 ```bash
-# Clone or copy files to /opt/tgbot/
-cd /opt/tgbot
+# Clone or copy files to /opt/materia/
+cd /opt/materia
 
 # Create and activate virtualenv
 python3 -m venv venv
@@ -119,18 +119,18 @@ Copy `.env.example` to `.env` and fill in the values:
 
 ## Systemd Service
 
-The service runs as the `tgbot` system user.
+The service runs as the `materia` system user.
 
 ```bash
 # Enable and start
-sudo systemctl enable tgbot
-sudo systemctl start tgbot
+sudo systemctl enable materia
+sudo systemctl start materia
 
 # View logs
-sudo journalctl -u tgbot -f
+sudo journalctl -u materia -f
 
 # Restart after changes
-sudo systemctl restart tgbot
+sudo systemctl restart materia
 ```
 
 ---
@@ -144,7 +144,7 @@ sudo systemctl restart tgbot
 | `/context` | Show token usage breakdown |
 | `/compact` | Force context compaction now |
 | `/tools` | List all registered tools |
-| `/scripts` | List scripts in `/opt/tgbot/scripts/` |
+| `/scripts` | List scripts in `/opt/materia/scripts/` |
 | `/memory` | Dump all stored facts from the memory table |
 | `/reset` | Clear conversation history completely |
 | `/cancel` | Cancel the current in-progress operation |
@@ -209,7 +209,7 @@ register(ToolSpec(
 ))
 ```
 
-That's it. After `sudo systemctl restart tgbot`:
+That's it. After `sudo systemctl restart materia`:
 - `/bitcoin_price` works as a slash command
 - `list_tools` and `/help` include it
 - The intent classifier can route to it (if `intent_hint` is set)
@@ -266,7 +266,7 @@ tools/my_private_tool.py
 Drop-in tools require a service restart to be discovered:
 
 ```bash
-sudo systemctl restart tgbot
+sudo systemctl restart materia
 ```
 
 Tools created via `create_tool` (LLM-generated) hot-reload without a restart.
@@ -356,7 +356,7 @@ When the bot is about to run a command containing `rm`, `remove_cron`, `kill`, `
 ## Security
 
 - Only users listed in `TELEGRAM_ALLOWED_USERS` can interact with the bot
-- The service runs as an unprivileged `tgbot` system user
+- The service runs as an unprivileged `materia` system user
 - `.env` and `data/` are git-ignored
 
 ---

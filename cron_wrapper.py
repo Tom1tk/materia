@@ -8,11 +8,11 @@ import time
 from pathlib import Path
 
 from dotenv import load_dotenv
-load_dotenv("/opt/tgbot/.env")
+load_dotenv("/opt/materia/.env")
 
 import aiosqlite
 
-DB_PATH = "/opt/tgbot/data/memory.db"
+DB_PATH = "/opt/materia/data/memory.db"
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_ALLOWED_USERS = [
     int(x.strip())
@@ -65,7 +65,7 @@ async def main():
     t0 = time.monotonic()
     try:
         result = subprocess.run(
-            ["/opt/tgbot/venv/bin/python", str(script_path)],
+            ["/opt/materia/venv/bin/python", str(script_path)],
             capture_output=True, text=True, timeout=300,
         )
         exit_code = result.returncode

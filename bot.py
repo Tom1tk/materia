@@ -59,7 +59,7 @@ async def refresh_commands():
         BotCommand(command="reset",   description="Clear conversation history"),
     ]
     try:
-        with open("/opt/tgbot/manifest.json") as f:
+        with open("/opt/materia/manifest.json") as f:
             data = json.load(f)
         for tool in data["tools"]:
             name = tool["name"]
@@ -95,7 +95,7 @@ def _md_to_tg(text: str) -> str:
 async def cmd_help(message: Message):
     if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
         return
-    with open("/opt/tgbot/manifest.json") as f:
+    with open("/opt/materia/manifest.json") as f:
         data = json.load(f)
     tool_entries = [f"• {html.escape(t['name'])} — {html.escape(t['description'])}" for t in data["tools"]]
     for spec in registry.all_tools():
@@ -213,7 +213,7 @@ async def cmd_status(message: Message):
     lines.append(f"<b>Context:</b> {total:,} / {config.CONTEXT_LIMIT:,} tokens ({pct}%)")
 
     # Disk
-    disk = shutil.disk_usage("/opt/tgbot")
+    disk = shutil.disk_usage("/opt/materia")
     used_gb = disk.used / 1024**3
     total_gb = disk.total / 1024**3
     lines.append(f"<b>Disk:</b> {used_gb:.1f} GB / {total_gb:.1f} GB used")
@@ -607,8 +607,8 @@ async def main():
     registry.discover()
     logger.info("[Materia] Starting up — Small spells. Real magic.")
 
-    Path("/opt/tgbot/scripts").mkdir(exist_ok=True)
-    Path("/opt/tgbot/data").mkdir(exist_ok=True)
+    Path("/opt/materia/scripts").mkdir(exist_ok=True)
+    Path("/opt/materia/data").mkdir(exist_ok=True)
 
     await refresh_commands()
     logger.info("[Materia] Bot commands registered.")
