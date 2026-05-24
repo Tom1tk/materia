@@ -35,9 +35,12 @@ async def build_chat_messages(params: dict) -> list:
 
     # Grounding: available tools
     try:
+        from tools import registry
         with open(MANIFEST_PATH) as f:
             _manifest = json.load(f)
-        tools_list = ", ".join(t["name"] for t in _manifest["tools"])
+        names = [t["name"] for t in _manifest["tools"]]
+        names += [s.name for s in registry.all_tools()]
+        tools_list = ", ".join(names)
     except Exception:
         tools_list = "unavailable"
 
@@ -565,11 +568,11 @@ async def create_tool(params: dict) -> str:
     schedule = params.get("schedule", "")
 
     messages = [
-        {"role": "system", "content": """You are Materia. Generate a Python async tool function.
+        {"role": "system", "content": """You are Materia. Generate a Python async tool function that will be appended to tools/user_tools.py and hot-reloaded immediately.
 Return JSON with:
-- function_code: complete async Python function (include all imports at top of function body or as module-level)
+- function_code: complete async Python function. Do NOT include ToolSpec or register() calls — just the bare function.
 - tool_name: snake_case name
-- description: one-line description
+- description: one-line description shown in /tools and /help
 - schedule: cron expression or empty string
 
 The function signature must be: async def <tool_name>(params: dict) -> str:
@@ -610,12 +613,15 @@ It should return a string result. Import any modules inside the function body.""
 # ─── 10. LIST TOOLS ─────────────────────────────────────────────────────────
 
 async def list_tools(params: dict) -> str:
+    from tools import registry
     with open(MANIFEST_PATH) as f:
         data = json.load(f)
     lines = []
     for t in data["tools"]:
         tag = "(built-in)" if t.get("builtin") else "(custom)"
         lines.append(f"• {t['name']} {tag} — {t['description']}")
+    for spec in registry.all_tools():
+        lines.append(f"• {spec.name} (plugin) — {spec.description}")
     return "Available tools:\n" + "\n".join(lines)
 
 
@@ -733,6 +739,11 @@ def needs_confirmation(action: str, params: dict) -> str | None:
         for pattern, label in _DESTRUCTIVE_SHELL:
             if pattern.search(cmd):
                 return f"{label}: <code>{cmd[:200]}</code>"
+
+    from tools import registry
+    spec = registry.get(action)
+    if spec and spec.confirm:
+        return spec.confirm(params)
 
     return None
 

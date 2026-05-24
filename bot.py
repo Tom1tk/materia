@@ -22,7 +22,8 @@ import memory as mem
 import context as ctx
 import agent
 from intent import classify_intent
-from router import route
+from router import route, TOOL_MAP
+from tools import registry
 
 _STARTED_AT = datetime.now(ZoneInfo(config.TIMEZONE))
 
@@ -68,6 +69,9 @@ async def refresh_commands():
                 commands.append(BotCommand(command=name, description=desc[:256]))
     except Exception as e:
         logger.warning(f"Could not load manifest for command menu: {e}")
+    for spec in registry.all_tools():
+        if len(spec.name) <= 32 and len(spec.description) >= 3:
+            commands.append(BotCommand(command=spec.name, description=spec.description[:256]))
     await bot.set_my_commands(commands)
     logger.info(f"[Materia] Command menu updated — {len(commands)} entries.")
 
@@ -93,9 +97,10 @@ async def cmd_help(message: Message):
         return
     with open("/opt/tgbot/manifest.json") as f:
         data = json.load(f)
-    tools_list = "\n".join(
-        f"• {html.escape(t['name'])} — {html.escape(t['description'])}" for t in data["tools"]
-    )
+    tool_entries = [f"• {html.escape(t['name'])} — {html.escape(t['description'])}" for t in data["tools"]]
+    for spec in registry.all_tools():
+        tool_entries.append(f"• {html.escape(spec.name)} — {html.escape(spec.description)}")
+    tools_list = "\n".join(tool_entries)
     await message.answer(
         "<b>Materia</b> — Small spells. Real magic.\n\n"
         "Commands:\n"
@@ -277,7 +282,7 @@ async def handle_confirm_callback(callback: CallbackQuery):
 
     try:
         result = await route(intent, user_text)
-        parse_mode = "Markdown" if action in ("hn_briefing",) else None
+        parse_mode = "Markdown" if _is_markdown(action) else None
         await callback.message.reply(truncate(result), parse_mode=parse_mode)
         await mem.conversation_add("assistant", result)
     except Exception as e:
@@ -402,13 +407,15 @@ async def _process_text(message: Message, user_text: str):
                 )
                 return
 
-            if action in ("create_script", "create_tool", "edit_script"):
+            _builtin_notify = {"create_script", "create_tool", "edit_script"}
+            _spec = registry.get(action)
+            if action in _builtin_notify or (_spec and _spec.streams_progress):
                 params["notify"] = _notify
 
             result = await route(intent, user_text)
-            parse_mode = "Markdown" if action in ("hn_briefing", "create_script", "edit_script") else None
+            parse_mode = "Markdown" if _is_markdown(action) else None
             await message.answer(truncate(result), parse_mode=parse_mode)
-            if action == "create_tool":
+            if action == "create_tool" or (_spec and _spec.refresh_commands_after):
                 await refresh_commands()
 
         await mem.conversation_add("assistant", result)
@@ -417,6 +424,119 @@ async def _process_text(message: Message, user_text: str):
         raise
     finally:
         typing_task.cancel()
+
+
+_SLASH_META = {
+    "start", "help", "status", "context", "compact",
+    "memory", "tools", "scripts", "reset", "cancel",
+}
+
+_BUILTIN_MARKDOWN = {"hn_briefing", "create_script", "edit_script"}
+
+
+def _is_markdown(action: str) -> bool:
+    if action in _BUILTIN_MARKDOWN:
+        return True
+    spec = registry.get(action)
+    return bool(spec and spec.markdown)
+
+
+async def _run_slash_tool(message: Message, action: str, params: dict, user_text: str):
+    """Dispatch a tool directly from a slash command, bypassing intent classification."""
+    typing_task = asyncio.create_task(_keep_typing(message.chat.id))
+    _last_notify: list[float] = [0.0]
+
+    async def _notify(text: str):
+        gap = asyncio.get_event_loop().time() - _last_notify[0]
+        if gap < 1.5:
+            await asyncio.sleep(1.5 - gap)
+        try:
+            await message.answer(truncate(text), parse_mode="Markdown")
+        except Exception:
+            try:
+                await message.answer(truncate(text))
+            except Exception as e:
+                logger.warning(f"slash notify failed: {e}")
+        _last_notify[0] = asyncio.get_event_loop().time()
+
+    intent = {"action": action, "params": params, "mode": "simple_tool"}
+
+    try:
+        await mem.conversation_add("user", user_text)
+
+        from tools.builtin import needs_confirmation
+        warning = needs_confirmation(action, params)
+        if warning:
+            kb = InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text="✅ Yes, proceed", callback_data="confirm_yes"),
+                InlineKeyboardButton(text="❌ No, cancel", callback_data="confirm_no"),
+            ]])
+            _pending_confirms[message.chat.id] = {
+                "intent": intent,
+                "user_text": user_text,
+                "expires_at": time.monotonic() + 60,
+            }
+            typing_task.cancel()
+            await message.answer(f"⚠️ <b>Confirm:</b> {warning}", parse_mode="HTML", reply_markup=kb)
+            return
+
+        _builtin_notify = {"create_script", "create_tool", "edit_script"}
+        _spec = registry.get(action)
+        if action in _builtin_notify or (_spec and _spec.streams_progress):
+            params["notify"] = _notify
+
+        result = await route(intent, user_text)
+        if _is_markdown(action):
+            try:
+                await message.answer(truncate(result), parse_mode="Markdown")
+            except Exception:
+                await message.answer(truncate(result))
+        else:
+            await message.answer(truncate(result))
+
+        await mem.conversation_add("assistant", result)
+
+        if action == "create_tool" or (_spec and _spec.refresh_commands_after):
+            await refresh_commands()
+
+    except asyncio.CancelledError:
+        raise
+    finally:
+        typing_task.cancel()
+
+
+@dp.message(F.text.startswith("/"))
+async def handle_slash_tool(message: Message):
+    if message.from_user.id not in config.TELEGRAM_ALLOWED_USERS:
+        return
+
+    text = message.text or ""
+    parts = text.lstrip("/").split(None, 1)
+    cmd = parts[0].split("@")[0].lower()
+    args = parts[1].strip() if len(parts) > 1 else ""
+
+    if cmd in _SLASH_META:
+        return
+
+    import sys
+    in_tool_map = cmd in TOOL_MAP
+    in_user_tools = bool(getattr(sys.modules.get("tools.user_tools"), cmd, None))
+    in_registry = registry.get(cmd) is not None
+    if not in_tool_map and not in_user_tools and not in_registry:
+        await message.answer(f"Unknown tool: /{cmd}\nType /tools to see what's available.")
+        return
+
+    params = {"raw": args} if args else {}
+    task = asyncio.create_task(_run_slash_tool(message, cmd, params, text))
+    _active_tasks[message.chat.id] = task
+    try:
+        await task
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.error(f"handle_slash_tool error: {e}", exc_info=True)
+    finally:
+        _active_tasks.pop(message.chat.id, None)
 
 
 @dp.message(F.text)
@@ -483,6 +603,8 @@ async def handle_voice(message: Message):
 
 async def main():
     await mem.init_db()
+    from tools import registry
+    registry.discover()
     logger.info("[Materia] Starting up — Small spells. Real magic.")
 
     Path("/opt/tgbot/scripts").mkdir(exist_ok=True)

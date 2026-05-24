@@ -3,6 +3,7 @@ import logging
 import memory as mem
 import llm
 import config
+from tools import registry
 
 logger = logging.getLogger(__name__)
 
@@ -32,16 +33,17 @@ INTENT_SCHEMA = {
 }
 
 async def get_manifest_text() -> str:
+    lines = []
     try:
         with open("/opt/tgbot/manifest.json") as f:
             data = json.load(f)
-        lines = []
         for t in data["tools"]:
             lines.append(f"- {t['name']}: {t['description']}")
-        return "\n".join(lines)
     except Exception as e:
         logger.error(f"Failed to read manifest: {e}")
-        return ""
+    for spec in registry.all_tools():
+        lines.append(f"- {spec.name}: {spec.description}")
+    return "\n".join(lines)
 
 async def classify_intent(user_message: str) -> dict:
     """Classify user message into a structured intent."""
@@ -58,6 +60,10 @@ async def classify_intent(user_message: str) -> dict:
     recent_text = ""
     if recent:
         recent_text = "\nRecent conversation:\n" + "\n".join(f"{m['role'].upper()}: {m['content']}" for m in recent)
+
+    # Routing hints from drop-in tool specs
+    _hints = [s.intent_hint for s in registry.all_tools() if s.intent_hint]
+    extra_rules = ("\n\n" + "\n\n".join(_hints)) if _hints else ""
 
     system_prompt = f"""You are Materia — a personal assistant running locally on a Proxmox server.
 You classify user messages into structured actions. Respond ONLY with valid JSON matching the schema.
@@ -115,7 +121,7 @@ Available tools:
   Set `query` to a concise search query. Set `length` to "short", "medium", or "long" based on how much detail is needed.
 
 **chat** — mode=chat, action=chat for genuine conversation when no tool applies.
-
+{extra_rules}
 Always return valid JSON with all required fields. For agentic_task, set action="agentic_task"."""
 
     messages = [

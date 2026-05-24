@@ -2,7 +2,7 @@
 
 > *Small spells. Real magic.*
 
-Materia is a local-first Telegram bot running on a Proxmox server. It routes natural-language messages through an intent classifier to a suite of built-in tools, with the ability to create and hot-reload new tools on demand.
+Materia is a local-first Telegram bot running on a Proxmox server. It routes natural-language messages through an intent classifier to a suite of built-in tools, with the ability to create and drop in new tools on demand.
 
 ---
 
@@ -11,6 +11,8 @@ Materia is a local-first Telegram bot running on a Proxmox server. It routes nat
 - **Intent classification** via a local LLM (llama-server / OpenAI-compatible)
 - **ReAct agentic loop** — multi-step reasoning with tool use and self-correction
 - **16 built-in tools**: chat, web search, Hacker News briefing, script creation/editing/versioning, cron management, shell execution, tool creation, memory, run history
+- **Drop-in tool plugins** — add a tool by dropping one file in `tools/`; no core-file edits needed
+- **Slash-command bypass** — `/tool_name arg` routes directly without LLM intent classification
 - **Voice messages** — OGG voice notes transcribed via faster-whisper, then routed normally
 - **Script versioning** — snapshots saved on create/edit; rollback to any previous version
 - **Script run history** — all script executions logged; inspect per-script or across all scripts
@@ -18,7 +20,7 @@ Materia is a local-first Telegram bot running on a Proxmox server. It routes nat
 - **Destructive command confirmation** — inline Yes/No keyboard for dangerous operations
 - **Persistent memory** stored in SQLite (`data/memory.db`)
 - **Context compaction** — summarises conversation history when the context window fills up
-- **Hot-reload** of user-created tools without restarting the bot
+- **Hot-reload** of LLM-created tools without restarting the bot
 - **User allowlist** — only configured Telegram user IDs can interact
 
 ---
@@ -48,11 +50,13 @@ Materia is a local-first Telegram bot running on a Proxmox server. It routes nat
 ├── transcribe.py       # faster-whisper voice transcription
 ├── cron_wrapper.py     # Wraps cron scripts; sends Telegram alert on failure
 ├── tools/
-│   ├── __init__.py
+│   ├── spec.py         # ToolSpec dataclass — the contract for drop-in tools
+│   ├── registry.py     # Tool registry: register(), get(), all_tools(), discover()
 │   ├── builtin.py      # All 16 built-in tools
-│   └── user_tools.py   # Hot-reloaded user-created tools
-├── manifest.json       # Tool registry
-├── scripts/            # User-generated Python scripts
+│   ├── user_tools.py   # Hot-reloaded LLM-created tools (via create_tool)
+│   └── <name>.py       # Drop-in tool files (auto-discovered on startup)
+├── manifest.json       # Registry for the 16 built-in tools
+├── scripts/            # User-generated Python scripts (drop-in; auto-discovered)
 ├── data/               # SQLite database (git-ignored)
 ├── .env                # Secrets (git-ignored)
 ├── .env.example        # Template for .env
@@ -139,6 +143,14 @@ sudo systemctl restart tgbot
 | `/reset` | Clear conversation history completely |
 | `/cancel` | Cancel the current in-progress operation |
 
+Any registered tool is also directly callable as a slash command:
+
+```
+/proxmox_status
+/proxmox_gpu 3600
+/web_search python asyncio tutorial
+```
+
 ---
 
 ## Built-in Tools
@@ -157,10 +169,127 @@ sudo systemctl restart tgbot
 | `run_shell` | Run a shell command or install a package |
 | `add_cron` | Add or modify a cron entry for a script |
 | `remove_cron` | Remove a cron entry for a script |
-| `create_tool` | Create a new tool from a plain-English description |
+| `create_tool` | Create a new tool from a plain-English description (appends to `user_tools.py`) |
 | `list_tools` | List all available tools |
 | `memory_set` | Save a preference or fact (`key: value`) |
 | `memory_get` | Retrieve a stored preference or fact |
+
+---
+
+## Adding a Tool by Hand (Drop-in Pattern)
+
+Drop a `.py` file into `tools/`. The bot discovers and registers it automatically on the next startup — no edits to `router.py`, `intent.py`, `bot.py`, or `manifest.json`.
+
+### Minimal example
+
+```python
+# tools/bitcoin_price.py
+from tools.spec import ToolSpec
+from tools.registry import register
+
+async def bitcoin_price(params: dict) -> str:
+    import aiohttp
+    async with aiohttp.ClientSession() as s:
+        async with s.get("https://api.coindesk.com/v1/bpi/currentprice/GBP.json") as r:
+            data = await r.json()
+    price = data["bpi"]["GBP"]["rate"]
+    return f"BTC: £{price}"
+
+register(ToolSpec(
+    name="bitcoin_price",
+    description="Current Bitcoin price in GBP",
+    handler=bitcoin_price,
+))
+```
+
+That's it. After `sudo systemctl restart tgbot`:
+- `/bitcoin_price` works as a slash command
+- `list_tools` and `/help` include it
+- The intent classifier can route to it (if `intent_hint` is set)
+
+### Full ToolSpec fields
+
+| Field | Type | Default | Purpose |
+|---|---|---|---|
+| `name` | `str` | required | Snake-case tool name; also the slash command (`/bitcoin_price`) |
+| `description` | `str` | required | Shown in `/tools`, `/help`, command menu, and intent prompt |
+| `handler` | `async def(params: dict) -> str` | required | The implementation function |
+| `params` | `dict` | `{}` | Documented param shape (informational only) |
+| `added` | `str` | `""` | `YYYY-MM-DD` creation date |
+| `intent_hint` | `str \| None` | `None` | Routing rules block for the intent classifier. Include trigger words and how to map params. Omit to make the tool slash-only (no LLM routing). |
+| `confirm` | `callable \| None` | `None` | `def(params) -> str \| None` — return an HTML warning string to require Yes/No confirmation before running; return `None` to skip. |
+| `markdown` | `bool` | `False` | Render output with Telegram Markdown v1 parse_mode. |
+| `streams_progress` | `bool` | `False` | Inject a `notify(text)` async callback into `params["notify"]` for live progress updates during long-running operations. |
+| `refresh_commands_after` | `bool` | `False` | Refresh the Telegram command menu after a successful run (use when the tool itself creates new tools or changes the available command set). |
+
+### Multi-tool file (shared helpers)
+
+A single file can register multiple tools. Use this when tools share helper functions:
+
+```python
+# tools/my_service.py
+from tools.spec import ToolSpec
+from tools.registry import register
+
+async def _api_get(path): ...   # shared helper
+
+async def service_status(params): ...
+async def service_control(params): ...
+
+def _confirm_control(params):
+    if params.get("description") == "stop":
+        return f"Stop <code>{params.get('raw','?')}</code>?"
+    return None
+
+register(ToolSpec(name="service_status", description="...", handler=service_status, markdown=True))
+register(ToolSpec(name="service_control", description="...", handler=service_control, confirm=_confirm_control))
+```
+
+### Private / personal tools
+
+Add the file to `.gitignore` — it works identically, but stays off the repo:
+
+```
+# .gitignore
+tools/my_private_tool.py
+```
+
+### Hot-reload
+
+Drop-in tools require a service restart to be discovered:
+
+```bash
+sudo systemctl restart tgbot
+```
+
+Tools created via `create_tool` (LLM-generated) hot-reload without a restart.
+
+---
+
+## Creating Tools via LLM
+
+Send a message like:
+
+> "Create a tool that checks the current Bitcoin price and returns it in GBP"
+
+The bot will:
+1. Generate an async Python function via the LLM
+2. Append it to `tools/user_tools.py`
+3. Register it in `manifest.json`
+4. Hot-reload the module — no restart needed
+
+For hand-authored tools with full control over routing, confirmation, and markdown rendering, use the drop-in pattern above instead.
+
+---
+
+## Adding Scripts
+
+Drop a `.py` file into `scripts/`. It is immediately:
+- Runnable via `run_script` or `/run_script <name>`
+- Schedulable via `add_cron`
+- Visible in `list_scripts`
+
+No registration or core-file edits needed. Scripts run via `cron_wrapper.py` which sends a Telegram alert on failure.
 
 ---
 
@@ -213,21 +342,7 @@ Scheduled scripts are invoked via `cron_wrapper.py` instead of directly. If a sc
 
 ## Destructive Command Confirmation
 
-When the bot is about to run a command containing `rm`, `remove_cron`, `kill`, `pip uninstall`, `systemctl stop`, or similar, it pauses and presents an inline **Yes / No** keyboard. The operation only proceeds on explicit confirmation.
-
----
-
-## Creating Custom Tools
-
-Send a message like:
-
-> "Create a tool that checks the current Bitcoin price and returns it in GBP"
-
-The bot will:
-1. Generate an async Python function via the LLM
-2. Append it to `tools/user_tools.py`
-3. Register it in `manifest.json`
-4. Hot-reload the module — no restart needed
+When the bot is about to run a command containing `rm`, `remove_cron`, `kill`, `pip uninstall`, `systemctl stop`, or similar — or when a drop-in tool declares a `confirm` function — it pauses and presents an inline **Yes / No** keyboard. The operation only proceeds on explicit confirmation.
 
 ---
 

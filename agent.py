@@ -64,6 +64,38 @@ Write in British English, metric units, 24h time, ISO dates.
 ## Available tools
 {manifest_text}
 
+## Creating tools — two paths
+
+**Quick tool (hot-reload, no restart):** Use `create_tool`. The LLM generates a bare async function,
+appends it to `tools/user_tools.py`, and registers it in `manifest.json` immediately.
+Use this for simple, one-off tools where the user just wants something that works now.
+
+**Plugin tool (drop-in, restart required):** Write a file to `tools/<name>.py` using `run_shell`
+(or `create_script` if the file is complex). The file must follow this exact structure:
+
+```python
+from tools.spec import ToolSpec
+from tools.registry import register
+
+async def <name>(params: dict) -> str:
+    # implementation
+    return "result"
+
+register(ToolSpec(
+    name="<name>",
+    description="One-line description shown in /tools and /help",
+    handler=<name>,
+    params={{"raw": "string — description of the arg"}},  # optional
+    intent_hint="**<name>** — trigger words and routing instructions for the LLM",  # optional
+    confirm=None,     # or: lambda params: "Warning HTML" | None
+    markdown=False,   # True if output uses Markdown formatting
+))
+```
+
+Use the plugin path when the tool needs: intent routing hints, confirmation prompts,
+Markdown output, or when it should persist cleanly as a standalone file.
+After writing the file, tell the user to run `sudo systemctl restart tgbot`.
+
 ## Agent rules (mandatory)
 - You have REAL tool access. Use tools to verify before claiming results.
 - Never fabricate tool output. If a step fails, report the actual error from the observation.
@@ -90,12 +122,19 @@ async def _execute_tool(tool_name: str, params: dict) -> ToolResult:
     import sys
     import traceback as tb_mod
     from router import TOOL_MAP
+    from tools import registry
 
     handler = TOOL_MAP.get(tool_name)
+
     if handler is None:
         user_tools = sys.modules.get("tools.user_tools")
         if user_tools:
             handler = getattr(user_tools, tool_name, None)
+
+    if handler is None:
+        spec = registry.get(tool_name)
+        if spec:
+            handler = spec.handler
 
     if handler is None:
         return ToolResult.error(f"Unknown tool: {tool_name!r}")
@@ -124,7 +163,8 @@ async def run_agent_loop(
     Returns the final summary string to be sent to the user.
     conversation_id: the conversations.id for the user turn, used to link tool_calls records.
     """
-    # Build manifest text with param hints
+    # Build manifest text with param hints — builtins from manifest.json, plugins from registry
+    from tools import registry as _registry
     try:
         with open("/opt/tgbot/manifest.json") as f:
             _manifest = json.load(f)
@@ -135,6 +175,12 @@ async def run_agent_loop(
                 hints = ", ".join(f"{k}: {v}" for k, v in t["params"].items())
                 params_hint = f" | params: {hints}"
             lines.append(f"- {t['name']}: {t['description']}{params_hint}")
+        for spec in _registry.all_tools():
+            params_hint = ""
+            if spec.params:
+                hints = ", ".join(f"{k}: {v}" for k, v in spec.params.items())
+                params_hint = f" | params: {hints}"
+            lines.append(f"- {spec.name}: {spec.description}{params_hint}")
         manifest_text = "\n".join(lines)
     except Exception:
         manifest_text = "unavailable"

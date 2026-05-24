@@ -6,6 +6,7 @@ from tools.builtin import (
     memory_set_tool, memory_get_tool, run_shell, edit_script,
     script_history, rollback_script,
 )
+from tools import registry
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,6 @@ TOOL_MAP = {
     "script_history": script_history,
     "rollback_script": rollback_script,
 }
-
 async def route(intent: dict, user_message: str) -> str:
     action = intent.get("action", "chat")
     params = intent.get("params", {})
@@ -37,12 +37,19 @@ async def route(intent: dict, user_message: str) -> str:
         params["raw"] = user_message
 
     handler = TOOL_MAP.get(action)
+
     if handler is None:
         # Check user_tools via sys.modules so hot-reloaded version is used
         import sys
         user_tools_module = sys.modules.get("tools.user_tools")
         if user_tools_module:
             handler = getattr(user_tools_module, action, None)
+
+    if handler is None:
+        # Check drop-in tool registry (populated after startup discover())
+        spec = registry.get(action)
+        if spec:
+            handler = spec.handler
 
     if handler is None:
         logger.warning(f"No handler for action: {action}, falling back to chat")
