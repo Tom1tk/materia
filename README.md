@@ -1,7 +1,5 @@
 # Materia
 
-> *Small spells. Real magic.*
-
 Materia is a local-first Telegram bot built around a simple idea: most daily tasks don't need an AI agent. They need a small script that runs reliably. The AI is there to write that script from a plain-English request, schedule it, and then get out of the way.
 
 Existing AI assistants can do all of this, but they're overkill. Every interaction calls the model, burns tokens, and adds latency. Materia's goal is **zero tokens for daily use**. Describe what you want once, get a Python script that runs on a cron schedule, and never touch the LLM again for that task. Complex agentic tasks and natural conversation are still fully supported, but they're the exception, not the default.
