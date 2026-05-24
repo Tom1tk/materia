@@ -187,7 +187,13 @@ async def run_agent_loop(
         tool_params = step.get("params") or {}
 
         # Notify user with step milestone
-        await notify(f"⚙️ Step {step_n}/{MAX_STEPS} · `{tool_name}`")
+        detail = ""
+        if getattr(config, "AGENT_VERBOSE_STEPS", True) and tool_params:
+            raw_val = str(tool_params.get("raw", "")).replace("\n", " ").strip()
+            if raw_val:
+                truncated = raw_val[:80] + ("…" if len(raw_val) > 80 else "")
+                detail = f"\n```\n{truncated}\n```"
+        await notify(f"⚙️ Step {step_n} · `{tool_name}`{detail}")
 
         # Execute the tool
         result = await _execute_tool(tool_name, tool_params)

@@ -3,6 +3,7 @@ import html
 import logging
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -75,6 +76,15 @@ def truncate(text: str, limit: int = 4096) -> str:
     if len(text) <= limit:
         return text
     return text[:limit - 15] + "... (truncated)"
+
+
+def _md_to_tg(text: str) -> str:
+    """Convert LLM markdown to Telegram Markdown v1 (bold only, no headers)."""
+    # ## Heading → *Heading*
+    text = re.sub(r'^#{1,6} +(.+)$', r'*\1*', text, flags=re.MULTILINE)
+    # **bold** → *bold*
+    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+    return text
 
 
 @dp.message(Command("start", "help"))
@@ -332,8 +342,11 @@ async def _process_text(message: Message, user_text: str):
             await asyncio.sleep(1.5 - gap)
         try:
             await message.answer(truncate(text), parse_mode="Markdown")
-        except Exception as e:
-            logger.warning(f"notify send failed: {e}")
+        except Exception:
+            try:
+                await message.answer(truncate(text))
+            except Exception as e:
+                logger.warning(f"notify send failed: {e}")
         _last_notify[0] = asyncio.get_event_loop().time()
 
     try:
@@ -347,6 +360,14 @@ async def _process_text(message: Message, user_text: str):
         if not params.get("raw") and not params.get("query"):
             params["raw"] = user_text
 
+        # Always show intent classification so routing is visible
+        reasoning = intent.get("reasoning", "")
+        await message.answer(
+            f"🔀 <b>Intent:</b> <code>{html.escape(action)}</code>\n"
+            f"<b>Reasoning:</b> {html.escape(reasoning)}",
+            parse_mode="HTML"
+        )
+
         if mode == "chat":
             result = await _stream_chat(message, params)
         elif mode == "agentic_task":
@@ -355,7 +376,10 @@ async def _process_text(message: Message, user_text: str):
                 notify=_notify,
                 conversation_id=user_conv_id,
             )
-            await message.answer(truncate(result))
+            try:
+                await message.answer(truncate(_md_to_tg(result)), parse_mode="Markdown")
+            except Exception:
+                await message.answer(truncate(result))
         else:
             # simple_tool path — check for destructive actions first
             from tools.builtin import needs_confirmation

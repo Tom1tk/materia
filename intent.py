@@ -108,6 +108,12 @@ Available tools:
   Trigger words: rollback, revert, undo, restore, previous version.
   Set `raw` to the script name. Set `description` to the version ID if known.
 
+**web_search** — user wants current information, live data, or something that requires searching the web.
+  Trigger words: search, look up, find, google, what is the latest, current, news, price, weather forecast,
+  who is, when did, recent, today's, this week's, what's happening.
+  Also trigger when the question clearly requires up-to-date information the model can't know from training.
+  Set `query` to a concise search query. Set `length` to "short", "medium", or "long" based on how much detail is needed.
+
 **chat** — mode=chat, action=chat for genuine conversation when no tool applies.
 
 Always return valid JSON with all required fields. For agentic_task, set action="agentic_task"."""

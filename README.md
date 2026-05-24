@@ -102,6 +102,8 @@ Copy `.env.example` to `.env` and fill in the values:
 | `COMPACTION_THRESHOLD` | Fraction at which compaction triggers | `0.65` |
 | `WARN_THRESHOLD` | Fraction at which a warning is issued | `0.50` |
 | `HISTORY_WINDOW` | Number of conversation turns to include | `8` |
+| `AGENT_MAX_STEPS` | Maximum tool-call steps per agentic task | `100` |
+| `AGENT_VERBOSE_STEPS` | Show the command run in each step notification | `true` |
 
 ---
 

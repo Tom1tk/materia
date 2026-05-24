@@ -23,3 +23,4 @@ TIMEZONE = os.getenv("TIMEZONE", "Europe/London")
 
 AGENT_MAX_STEPS = int(os.getenv("AGENT_MAX_STEPS", "6"))
 AGENT_MAX_SECONDS = int(os.getenv("AGENT_MAX_SECONDS", "600"))
+AGENT_VERBOSE_STEPS = os.getenv("AGENT_VERBOSE_STEPS", "true").lower() == "true"
