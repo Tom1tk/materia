@@ -2,7 +2,15 @@
 
 > *Small spells. Real magic.*
 
-Materia is a local-first Telegram bot running on a Proxmox server. It routes natural-language messages through an intent classifier to a suite of built-in tools, with the ability to create and drop in new tools on demand.
+Materia is a local-first Telegram bot built around a simple idea: most daily tasks don't need an AI agent. They need a small script that runs reliably. The AI is there to write that script from a plain-English request, schedule it, and then get out of the way.
+
+Existing AI assistants can do all of this, but they're overkill. Every interaction calls the model, burns tokens, and adds latency. Materia's goal is **zero tokens for daily use**. Describe what you want once, get a Python script that runs on a cron schedule, and never touch the LLM again for that task. Complex agentic tasks and natural conversation are still fully supported, but they're the exception, not the default.
+
+### The Materia philosophy
+
+**A tool is a single file you drop into `tools/`.** No edits to core files. No registration steps. No restart required for LLM-generated tools. Drop it in and it works: slash command, intent routing, confirmation prompts, and all.
+
+This is enforced by a `ToolSpec` + registry architecture. Each plugin file calls `register(ToolSpec(...))` at import time. The bot discovers and loads every plugin at startup via `registry.discover()`. Core files (`router.py`, `bot.py`, `intent.py`, `agent.py`) query the registry at call-time, so plugins are first-class citizens indistinguishable from built-ins.
 
 ---
 
@@ -10,7 +18,7 @@ Materia is a local-first Telegram bot running on a Proxmox server. It routes nat
 
 - **Intent classification** via a local LLM (llama-server / OpenAI-compatible)
 - **ReAct agentic loop** — multi-step reasoning with tool use and self-correction
-- **16 built-in tools**: chat, web search, Hacker News briefing, script creation/editing/versioning, cron management, shell execution, tool creation, memory, run history
+- **17 built-in tools**: chat, web search, Hacker News briefing, script creation/editing/versioning, cron management, shell execution, tool creation, memory, run history, bot restart
 - **Drop-in tool plugins** — add a tool by dropping one file in `tools/`; no core-file edits needed
 - **Slash-command bypass** — `/tool_name arg` routes directly without LLM intent classification
 - **Voice messages** — OGG voice notes transcribed via faster-whisper, then routed normally
@@ -173,6 +181,7 @@ Any registered tool is also directly callable as a slash command:
 | `list_tools` | List all available tools |
 | `memory_set` | Save a preference or fact (`key: value`) |
 | `memory_get` | Retrieve a stored preference or fact |
+| `restart_bot` | Restart the bot service (requires confirmation) |
 
 ---
 
