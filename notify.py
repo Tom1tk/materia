@@ -23,6 +23,9 @@ _USERS = [
 
 def send(text: str, parse_mode: str = "HTML") -> None:
     """Send text to all allowed Telegram users. Prints errors to stderr."""
+    if os.environ.get("MATERIA_TEST"):
+        print(f"[notify] suppressed (MATERIA_TEST): {text[:120]}", file=sys.stderr)
+        return
     if not _TOKEN or not _USERS:
         print("[notify] TELEGRAM_BOT_TOKEN or TELEGRAM_ALLOWED_USERS not set", file=sys.stderr)
         return

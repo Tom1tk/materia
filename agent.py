@@ -104,6 +104,11 @@ Use `notify` in cron-scheduled scripts that push results proactively (briefings,
 For scripts run interactively via run_script or the agent, use print() instead — stdout is shown to the user automatically.
 Never read TELEGRAM_BOT_TOKEN or build sendMessage calls manually in a script; notify handles all of that.
 
+When testing a script during development, pass test: true to run_script to suppress notify sends:
+  run_script({"raw": "my_script.py", "test": true})   ← verifies the script runs without spamming the user
+  run_script({"raw": "my_script.py"})                  ← real run, notify sends for real
+Use test: true by default when verifying a script works. Only omit it when the user explicitly asks you to send the notification.
+
 ## Telegram HTML rules (parse_mode=HTML)
 Telegram's HTML parser is strict. These mistakes cause a silent 400 error with no useful message:
 - Allowed tags ONLY: <b>, <i>, <u>, <s>, <code>, <pre>, <a href=...>

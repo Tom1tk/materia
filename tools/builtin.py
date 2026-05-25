@@ -461,13 +461,14 @@ async def create_script(params: dict) -> str:
         raise
 
 
-def _run_script_sync(script_path: Path) -> tuple[int, str, str, int]:
+def _run_script_sync(script_path: Path, test_mode: bool = False) -> tuple[int, str, str, int]:
     """Run a script synchronously with resource limits. Returns (exit_code, stdout, stderr, duration_ms)."""
     import time as _time
     t0 = _time.monotonic()
     cmd = _sandbox_cmd(["/opt/materia/venv/bin/python", str(script_path)], cpu_seconds=60)
+    env = {**os.environ, "MATERIA_TEST": "1"} if test_mode else dict(os.environ)
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=65)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=65, env=env)
         duration_ms = int((_time.monotonic() - t0) * 1000)
         return result.returncode, result.stdout, result.stderr, duration_ms
     except subprocess.TimeoutExpired:
@@ -588,7 +589,8 @@ async def run_script(params: dict) -> str:
     except ValueError:
         return f"Invalid script name: {raw!r}"
     if exact_path.exists():
-        exit_code, stdout, stderr, dur = _run_script_sync(exact_path)
+        test_mode = bool(params.get("test", False))
+        exit_code, stdout, stderr, dur = _run_script_sync(exact_path, test_mode=test_mode)
         await mem.script_run_log(exact_name, "manual", exit_code, stdout, stderr, dur)
         combined = (stdout + stderr)[:1000] or "(no output)"
         status = "✅" if exit_code == 0 else f"❌ exit {exit_code}"
@@ -608,7 +610,8 @@ async def run_script(params: dict) -> str:
             best_score, best_script = score, s
 
     if best_script and best_score > 0:
-        exit_code, stdout, stderr, dur = _run_script_sync(best_script)
+        test_mode = bool(params.get("test", False))
+        exit_code, stdout, stderr, dur = _run_script_sync(best_script, test_mode=test_mode)
         await mem.script_run_log(best_script.name, "manual", exit_code, stdout, stderr, dur)
         combined = (stdout + stderr)[:1000] or "(no output)"
         status = "✅" if exit_code == 0 else f"❌ exit {exit_code}"
