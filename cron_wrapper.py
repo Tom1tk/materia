@@ -63,12 +63,15 @@ async def main():
         sys.exit(1)
 
     t0 = time.monotonic()
+    existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    materia_pythonpath = "/opt/materia" if not existing_pythonpath else f"/opt/materia:{existing_pythonpath}"
     script_env = {
         **os.environ,
         "PATH": "/opt/materia/venv/bin:/usr/local/bin:/usr/bin:/bin",
         "PYTHONIOENCODING": "utf-8",
         "LANG": "C.UTF-8",
         "LC_ALL": "C.UTF-8",
+        "PYTHONPATH": materia_pythonpath,
     }
     prlimit = "/usr/bin/prlimit"
     sandbox_as = str(512 * 1024 * 1024)

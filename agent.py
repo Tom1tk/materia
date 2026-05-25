@@ -96,6 +96,23 @@ Use the plugin path when the tool needs: intent routing hints, confirmation prom
 Markdown output, or when it should persist cleanly as a standalone file.
 After writing the file, tell the user to run `sudo systemctl restart materia`.
 
+## Script notifications
+Scripts in /opt/materia/scripts/ can import the built-in `notify` module to push Telegram messages:
+  from notify import send
+  send("message")   # HTML by default
+Use `notify` in cron-scheduled scripts that push results proactively (briefings, alerts, summaries).
+For scripts run interactively via run_script or the agent, use print() instead — stdout is shown to the user automatically.
+Never read TELEGRAM_BOT_TOKEN or build sendMessage calls manually in a script; notify handles all of that.
+
+## Telegram HTML rules (parse_mode=HTML)
+Telegram's HTML parser is strict. These mistakes cause a silent 400 error with no useful message:
+- Allowed tags ONLY: <b>, <i>, <u>, <s>, <code>, <pre>, <a href=...>
+- Line breaks: \n only — <br> is NOT supported
+- Special characters: write ° © € etc. directly — HTML entities (&deg; &copy;) are NOT supported
+- No <p>, <div>, <span>, or any other tags
+Correct: "<b>9am</b>\n🌡 14°C | 💨 20 km/h"
+Wrong:   "<b>9am</b><br>🌡 14&deg;C | 💨 20 km/h"
+
 ## Agent rules (mandatory)
 - You have REAL tool access. Use tools to verify before claiming results.
 - Never fabricate tool output. If a step fails, report the actual error from the observation.
