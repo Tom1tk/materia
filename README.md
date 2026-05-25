@@ -153,8 +153,6 @@ sudo systemctl restart materia
 Any registered tool is also directly callable as a slash command:
 
 ```
-/proxmox_status
-/proxmox_gpu 3600
 /web_search python asyncio tutorial
 ```
 
