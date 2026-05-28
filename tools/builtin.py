@@ -489,7 +489,7 @@ def _add_cron_entry(filename: str, schedule: str, description: str = "") -> str:
     if not script_path.exists():
         return f"Script not found: {filename} — cron entry not added."
     try:
-        result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+        result = subprocess.run(["crontab", "-u", "materia", "-l"], capture_output=True, text=True)
         existing = result.stdout if result.returncode == 0 else ""
         cmd = f"{schedule} /opt/materia/venv/bin/python /opt/materia/cron_wrapper.py /opt/materia/scripts/{filename}"
         if cmd in existing:
@@ -499,7 +499,7 @@ def _add_cron_entry(filename: str, schedule: str, description: str = "") -> str:
         entry = f"{comment}\n{cmd}\n"
         separator = "" if existing.endswith("\n") else "\n"
         new_crontab = existing + separator + entry
-        proc = subprocess.run(["crontab", "-"], input=new_crontab, capture_output=True, text=True)
+        proc = subprocess.run(["crontab", "-u", "materia", "-"], input=new_crontab, capture_output=True, text=True)
         if proc.returncode == 0:
             return f"Cron entry added: {schedule}"
         return f"Failed to add cron: {proc.stderr}"
@@ -549,7 +549,7 @@ async def list_scripts(params: dict) -> str:
 
     # Read crontab
     try:
-        result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+        result = subprocess.run(["crontab", "-u", "materia", "-l"], capture_output=True, text=True)
         crontab_text = result.stdout if result.returncode == 0 else ""
     except Exception:
         crontab_text = ""
@@ -644,7 +644,7 @@ async def remove_cron(params: dict) -> str:
     if not name.endswith(".py"):
         name += ".py"
     try:
-        result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
+        result = subprocess.run(["crontab", "-u", "materia", "-l"], capture_output=True, text=True)
         if result.returncode != 0:
             return "No crontab found."
         full_path = f"/opt/materia/scripts/{name}"
@@ -661,7 +661,7 @@ async def remove_cron(params: dict) -> str:
         if len(new_lines) == len(lines):
             return f"No cron entry found for {name}."
         new_crontab = "\n".join(new_lines) + "\n"
-        proc = subprocess.run(["crontab", "-"], input=new_crontab, capture_output=True, text=True)
+        proc = subprocess.run(["crontab", "-u", "materia", "-"], input=new_crontab, capture_output=True, text=True)
         if proc.returncode == 0:
             return f"Cron entry removed for {name}."
         return f"Failed to update crontab: {proc.stderr}"
